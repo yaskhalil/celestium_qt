@@ -33,8 +33,7 @@ class Allocator:
         
         # 3. Volatility Adjustment
         # If ATR is high, we reduce size to keep dollar risk constant.
-        # Reference ATR: 15m NQ average (Mock value: 20 points)
-        reference_atr = 20.0 
+        reference_atr = settings.REFERENCE_ATR
         vol_multiplier = reference_atr / max(atr, 5.0) # Floor at 5.0 to avoid division by zero
         
         final_size = math.floor(base_size * vol_multiplier)

@@ -53,7 +53,7 @@ class Router:
             if price:
                 order = await self.client.order.place_limit_order(
                     symbol=symbol,
-                    exchange="CME",
+                    exchange=settings.EXCHANGE,
                     quantity=quantity,
                     price=price,
                     side=side,
@@ -62,7 +62,7 @@ class Router:
             else:
                 order = await self.client.order.place_market_order(
                     symbol=symbol,
-                    exchange="CME",
+                    exchange=settings.EXCHANGE,
                     quantity=quantity,
                     side=side,
                     callback=self._on_order_update

@@ -62,8 +62,8 @@ class Classifier:
             }
             
             if self.model is None:
-                logger.debug("Model not loaded, using mock probability", features=feature_data)
-                return 0.51 # Mock signal for testing
+                logger.error("Classifier: Prediction FAILED. Model not loaded.")
+                return 0.0
             
             # 4. Inference
             X = np.array([[v for v in feature_data.values()]])

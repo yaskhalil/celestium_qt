@@ -29,7 +29,7 @@ async def main():
     # Start the event loop
     try:
         # In a real run, you'd await client.connect() here
-        await engine.run(symbol="NQZ4")
+        await engine.run(symbol=settings.SYMBOL)
     except asyncio.CancelledError:
         logger.info("CelestiumQT shutting down...")
     except Exception as e:

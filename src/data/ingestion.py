@@ -27,7 +27,7 @@ class RithmicIngestor:
         self.client = RithmicClient(
             user=settings.RITHMIC_USERNAME,
             password=settings.RITHMIC_PASSWORD,
-            system_name="Rithmic Paper Trading" 
+            system_name=settings.RITHMIC_SYSTEM_NAME
         )
         
         try:
@@ -54,7 +54,7 @@ class RithmicIngestor:
         except Exception as e:
             logger.error("Ingestor: Error processing bar", error=str(e))
 
-    async def start_streaming(self, symbol: str = "NQZ4", exchange: str = "CME"):
+    async def start_streaming(self, symbol: str = settings.SYMBOL, exchange: str = settings.EXCHANGE):
         """Subscribes to 1m bars for the target symbol."""
         if not self.client:
             await self.connect()

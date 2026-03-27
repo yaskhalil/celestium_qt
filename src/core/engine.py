@@ -22,7 +22,7 @@ class Engine:
         self.router = Router(client, self.account_state)
         self.running = False
 
-    async def run(self, symbol: str = "NQZ4"):
+    async def run(self, symbol: str = settings.SYMBOL):
         """Main Loop for the engine."""
         self.running = True
         logger.info("Engine: Starting Core Loop...")
