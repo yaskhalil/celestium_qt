@@ -16,4 +16,5 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "async-rithmic>=1.5.9",
     "scikit-learn>=1.8.0",
+    "httpx>=0.28.1",
 ]
