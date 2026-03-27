@@ -1,0 +1,45 @@
+# CelestiumQT Development Rules & Model efficiency Guidelines
+
+## 1. Core Mandates
+- **Surgical Execution:** Prioritize targeted, minimal changes to existing code. Avoid broad refactors unless explicitly requested.
+- **Validation-Driven Development:** Every feature or fix MUST include a corresponding test case in `tests/`. Validation is the only path to finality.
+- **Type Safety:** Python 3.12+ features are mandatory. Use strict type hinting, `Final`, `Literal`, and `Annotated` where appropriate.
+- **Asynchronous First:** All I/O operations (Data, Execution, API) MUST be `async`. Avoid blocking the event loop at all costs.
+
+## 2. Technical Stack Conventions
+- **Data Engine (Polars):** Use Polars for all data manipulations. Avoid Pandas. Prefer lazy evaluation (`scan_parquet`, `collect`) for large datasets.
+- **Validation (Pydantic v2):** Use Pydantic models for all configuration, data schemas, and API responses. Utilize `field_validator` for complex risk checks.
+- **Logging (structlog):** Use `structlog` for structured, machine-readable logs. Include context (e.g., `symbol`, `order_id`, `pnl`) in every log.
+- **Concurrency (Asyncio):** Use `asyncio.TaskGroup` for managing concurrent tasks. Implement proper shutdown signals (`SIGINT`, `SIGTERM`).
+
+## 3. Structural Rules
+- **Layered Architecture:** Adhere strictly to the 4-layer stack:
+    1. `src/features/`: Statistical context and regime classification.
+    2. `src/models/`: Inference and signal generation.
+    3. `src/core/oracle.py`: The deterministic risk firewall (The "Apex Gate").
+    4. `src/execution/`: Order routing and reconciliation.
+- **Dependency Management:** Use `uv` exclusively. Do not use `pip` or `poetry`. Add dependencies via `uv add`.
+
+## 4. Coding Standards & Conventions
+- **Naming:** 
+    - Variables/Functions: `snake_case`.
+    - Classes: `PascalCase`.
+    - Constants: `SCREAMING_SNAKE_CASE`.
+- **Commenting:**
+    - Use Google-style docstrings for all public methods and classes.
+    - Inline comments should explain the "Why", not the "What".
+    - Mathematical formulas should be documented in LaTeX format (e.g., in `src/features/regime.py`).
+- **Performance:**
+    - Prefer vectorized Polars operations over Python loops.
+    - Use `__slots__` in high-frequency data structures if memory/speed is a bottleneck.
+    - Profile code using `cProfile` or specialized async profilers before optimizing.
+
+## 5. Model Efficiency & True Productivity
+- **Inquiry vs. Directive:** The model should treat reports of bugs or observations as *Inquiries* (analyze first) and only proceed to *Directives* (fix/implement) when confirmed.
+- **Context Compression:** When reporting results, focus on the diff and the validation outcome. Avoid repetitive summaries.
+- **Empirical Reproduction:** For bug fixes, the model MUST first create a failing test case that reproduces the issue before applying the fix.
+- **Proactive Risk Analysis:** When suggesting changes, the model should proactively identify potential risks to the "Apex $25k EOD Drawdown" account limits.
+
+## 6. Project-Specific constraints
+- **Apex 2026 Rules:** The `Oracle` is the most critical component. No trade should ever bypass the Oracle's `validate_trade` method.
+- **Rithmic Protocol:** Ensure all websocket interactions handle reconnections and heartbeats gracefully.

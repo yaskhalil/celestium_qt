@@ -1,0 +1,17 @@
+[project]
+name = "celestium_qt"
+version = "0.1.0"
+description = "Hierarchical Systematic Trading Stack"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "polars",
+    "pydantic",
+    "xgboost",
+    "scipy",
+    "websockets",
+    "structlog",
+    "pytest",
+    "torch",
+    "pydantic-settings>=2.13.1",
+]
