@@ -3,9 +3,13 @@ from datetime import datetime, time
 from typing import List, Optional, Annotated
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import structlog
+import json
+import os
 from src.config import settings
 
 logger = structlog.get_logger()
+
+STATE_FILE = "data/account_state.json"
 
 class AccountStatus(str, Enum):
     ACTIVE = "active"
@@ -23,8 +27,8 @@ class AccountState(BaseModel):
     
     balance: float
     equity: float
-    max_drawdown_limit: float = 25000.0  # $25k Account floor (Static for EOD usually)
-    safety_net_floor: float = 26100.0   # Apex 4.0 $26.1k threshold
+    max_drawdown_limit: float = 25000.0
+    safety_net_floor: float = 26100.0
     daily_loss_limit: float = 500.0
     
     current_daily_pnl: float = 0.0
@@ -36,11 +40,35 @@ class AccountState(BaseModel):
 
     @property
     def is_trading_allowed(self) -> bool:
-        # Check current time for Apex 4:59 PM ET Flat Rule
-        now_et = datetime.now().time() # Simplified: assume system time is ET or handled via pytz
+        now_et = datetime.now().time()
         if now_et >= time(16, 55) and now_et <= time(18, 0):
             return False
         return self.status == AccountStatus.ACTIVE
+
+    def save(self):
+        """Persists state to local JSON file."""
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        with open(STATE_FILE, "w") as f:
+            f.write(self.model_dump_json())
+        logger.debug("AccountState: Persisted to disk")
+
+    @classmethod
+    def load(cls) -> "AccountState":
+        """Loads state from local JSON file or returns default."""
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, "r") as f:
+                    return cls.model_validate_json(f.read())
+            except Exception as e:
+                logger.error("Failed to load state, starting fresh", error=str(e))
+        
+        # Default state if no file exists
+        return cls(
+            balance=27000.0, 
+            equity=27000.0,
+            safety_net_floor=settings.BALANCE_FLOOR,
+            daily_loss_limit=settings.DAILY_LOSS_LIMIT
+        )
 
 class Oracle:
     """The Risk Firewall (Apex 4.0 Rules - 2026 Edition)"""
@@ -49,60 +77,44 @@ class Oracle:
         self.state = state
 
     def validate_trade(self, quantity: int, price: float, side: str) -> bool:
-        """
-        Pydantic-driven state machine validation.
-        Enforces Apex 4.0 Safety Net, 50% Consistency, and 2026 DLL Pausing.
-        """
+        """Enforces Apex 4.0 Safety Net, 50% Consistency, and 2026 DLL Pausing."""
         logger.info("Oracle: Validating Trade Request", quantity=quantity, side=side, status=self.state.status)
 
-        # 1. Status Check (DLL Pausing Logic)
         if not self.state.is_trading_allowed:
             logger.error("VETO: Trading not allowed", status=self.state.status)
             return False
 
-        # 2. Daily Loss Limit Check (2026 Pausing Logic)
-        # If this trade could potentially breach DLL, or we are already near it.
         if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS
-            logger.error("VETO: Daily Loss Limit Breached. Pausing for session.", limit=self.state.daily_loss_limit)
+            self.state.save()
+            logger.error("VETO: Daily Loss Limit Breached.", limit=self.state.daily_loss_limit)
             return False
 
-        # 3. Apex 4.0 Safety Net ($26,100 Floor)
         if self.state.balance <= self.state.safety_net_floor:
-            # In Apex 4.0, falling below the floor often means failure, 
-            # but we treat it as a hard-stop before the broker liquidates.
-            logger.error("VETO: Safety Net Floor reached!", floor=self.state.safety_net_floor, balance=self.state.balance)
+            logger.error("VETO: Safety Net Floor reached!", balance=self.state.balance)
             return False
 
-        # 4. 50% Consistency Rule (Profit Dilution Check)
-        # Rule: No single day > 50% of total profit.
-        # If we have a massive win today, we can continue, but future payouts are blocked.
-        # However, for *execution* logic, we block NEW entries if today's profit 
-        # already makes up > 50% of the *projected* total to prevent 'gambling' the payout.
-        
         projected_total_profit = self.state.total_profit_since_payout + max(0, self.state.current_daily_pnl)
         if projected_total_profit > 0:
             consistency_ratio = self.state.current_daily_pnl / projected_total_profit
             if consistency_ratio > 0.50 and len(self.state.trading_history) < 5:
                 logger.warning("CONSISTENCY ALERT: Today's profit > 50% of total.", ratio=consistency_ratio)
-                # We don't necessarily VETO here unless requested, as you can 'dilute' later.
-                # But we log it as a critical warning for Layer 4 Advisor.
 
-        # 5. Quantity / Max Position Size
         if quantity > settings.MAX_POSITION_SIZE:
              logger.error("VETO: Max position size exceeded", max=settings.MAX_POSITION_SIZE, requested=quantity)
              return False
 
-        logger.info("Oracle: Trade VALIDATED", side=side, quantity=quantity)
+        logger.info("Oracle: Trade VALIDATED")
         return True
 
     def update_session(self, pnl: float):
-        """Updates the internal state after a trade or session close."""
+        """Updates the internal state and persists to disk."""
         self.state.current_daily_pnl += pnl
         self.state.balance += pnl
-        self.state.equity = self.state.balance # Simplified for EOD
+        self.state.equity = self.state.balance
         
         if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS
             
         self.state.last_updated = datetime.now()
+        self.state.save() # Auto-persist

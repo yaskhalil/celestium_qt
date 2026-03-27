@@ -39,15 +39,15 @@ class LiveBuffer:
         if len(self.df) > self.max_rows:
             self.df = self.df.tail(self.max_rows)
 
-    def get_15m_context(self) -> Optional[pl.DataFrame]:
+    def get_15m_context(self, history_size: int = 150) -> Optional[pl.DataFrame]:
         """
         Resamples the 1m buffer into 15m OHLCV bars.
-        Returns the latest context for inference.
+        Returns a history of context windows for feature calculation.
         """
         if self.df.is_empty():
             return None
             
-        return (
+        resampled = (
             self.df.sort("timestamp")
             .group_by_dynamic(
                 "timestamp", 
@@ -55,14 +55,15 @@ class LiveBuffer:
                 period="15m",  # 15m lookback
             )
             .agg([
-                pl.col("open").first(),
-                pl.col("high").max(),
-                pl.col("low").min(),
-                pl.col("close").last(),
-                pl.col("volume").sum()
+                pl.col("open").first().alias("open"),
+                pl.col("high").max().alias("high"),
+                pl.col("low").min().alias("low"),
+                pl.col("close").last().alias("close"),
+                pl.col("volume").sum().alias("volume")
             ])
-            .tail(1) # Get only the most recent 15m window
         )
+        
+        return resampled.tail(history_size)
 
     def get_hurst_series(self, window: int = 100) -> Optional[pl.Series]:
         """Returns the closing price series for Hurst calculation."""

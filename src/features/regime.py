@@ -27,9 +27,6 @@ def calculate_hurst_variance_ratio(prices: pl.Series, lags: list = [2, 5, 10, 20
         variances.append(vr)
         
     # 2. Linear regression: log(VR) vs log(k)
-    # Theoretically VR ~ k^(2H-1). log(VR) = (2H-1)log(k)
-    # Actually simpler: slope of log(Var(k-ret)) vs log(k) is 2H.
-    
     log_k = np.log(lags)
     log_vark = np.log([np.var(log_prices[k:] - log_prices[:-k]) for k in lags])
     
@@ -38,15 +35,66 @@ def calculate_hurst_variance_ratio(prices: pl.Series, lags: list = [2, 5, 10, 20
     
     return float(np.clip(hurst, 0.0, 1.0))
 
+def add_adx(df: pl.DataFrame, window: int = 14) -> pl.DataFrame:
+    """
+    Calculates the Average Directional Index (ADX) using Polars.
+    """
+    df = df.with_columns([
+        (pl.col("high") - pl.col("high").shift(1)).alias("up_move"),
+        (pl.col("low").shift(1) - pl.col("low")).alias("down_move")
+    ])
+
+    df = df.with_columns([
+        pl.when((pl.col("up_move") > pl.col("down_move")) & (pl.col("up_move") > 0))
+        .then(pl.col("up_move"))
+        .otherwise(0.0)
+        .alias("plus_dm"),
+        
+        pl.when((pl.col("down_move") > pl.col("up_move")) & (pl.col("down_move") > 0))
+        .then(pl.col("down_move"))
+        .otherwise(0.0)
+        .alias("minus_dm")
+    ])
+
+    # True Range calculation (if not already present)
+    df = df.with_columns([
+        pl.max_horizontal(
+            (pl.col("high") - pl.col("low")),
+            (pl.col("high") - pl.col("close").shift(1)).abs(),
+            (pl.col("low") - pl.col("close").shift(1)).abs()
+        ).alias("tr")
+    ])
+
+    # Wilder's Smoothing approx using EWMA
+    alpha = 1 / window
+    df = df.with_columns([
+        pl.col("tr").ewm_mean(alpha=alpha, adjust=False).alias("smoothed_tr"),
+        pl.col("plus_dm").ewm_mean(alpha=alpha, adjust=False).alias("smoothed_plus_dm"),
+        pl.col("minus_dm").ewm_mean(alpha=alpha, adjust=False).alias("smoothed_minus_dm")
+    ])
+
+    df = df.with_columns([
+        (100 * pl.col("smoothed_plus_dm") / pl.col("smoothed_tr")).alias("plus_di"),
+        (100 * pl.col("smoothed_minus_dm") / pl.col("smoothed_tr")).alias("minus_di")
+    ])
+
+    df = df.with_columns(
+        (100 * (pl.col("plus_di") - pl.col("minus_di")).abs() / (pl.col("plus_di") + pl.col("minus_di"))).alias("dx")
+    )
+
+    return df.with_columns(
+        pl.col("dx").ewm_mean(alpha=alpha, adjust=False).alias("adx")
+    )
+
 def add_regime_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     Adds statistical context features (Layer 1).
-    Calculates Hurst, ADX, and True Range using Polars.
+    Calculates Hurst, ADX, ATR, and Efficiency Ratio.
     """
     if df.is_empty():
         return df
 
-    # 1. Basic TR calculation
+    # 1. ATR and Basic TR
     df = df.with_columns([
         (pl.col("high") - pl.col("low")).alias("tr1"),
         (pl.col("high") - pl.col("close").shift(1)).abs().alias("tr2"),
@@ -57,12 +105,14 @@ def add_regime_features(df: pl.DataFrame) -> pl.DataFrame:
         pl.max_horizontal("tr1", "tr2", "tr3").alias("true_range")
     )
     
-    # 2. ATR
     df = df.with_columns(
         pl.col("true_range").rolling_mean(window_size=14).alias("atr")
     )
     
-    # 3. Efficiency Ratio (Kaufman) - Proxy for regime
+    # 2. ADX
+    df = add_adx(df)
+    
+    # 3. Efficiency Ratio (Kaufman)
     df = df.with_columns(
         (pl.col("close") - pl.col("close").shift(10)).abs().alias("net_change"),
         pl.col("close").diff().abs().rolling_sum(window_size=10).alias("volatility")

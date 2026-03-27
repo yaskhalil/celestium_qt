@@ -71,7 +71,7 @@ def train_alpha():
     full_df.write_parquet(processed_data_path)
     
     # 2. Training
-    features = ["hurst", "atr", "efficiency_ratio", "volatility"]
+    features = ["hurst", "atr", "efficiency_ratio", "volatility", "adx"]
     target = "label"
     
     logger.info("Starting Walk-Forward Training", rows=len(full_df))

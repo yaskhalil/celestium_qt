@@ -10,9 +10,11 @@ logger = structlog.get_logger()
 class Engine:
     """Orchestrates Data -> Features -> Model -> Allocator -> Oracle"""
     
-    def __init__(self, account_state: AccountState):
+    def __init__(self, account_state: Optional[AccountState] = None):
+        # Load state from disk if not provided
+        self.account_state = account_state or AccountState.load()
         self.buffer = LiveBuffer()
-        self.oracle = Oracle(account_state)
+        self.oracle = Oracle(self.account_state)
         self.allocator = Allocator()
         self.classifier = Classifier()
         self.running = False
@@ -23,12 +25,11 @@ class Engine:
         logger.info("Engine: Starting Core Loop...")
         
         while self.running:
-            # 1. Get 15m context
-            context = self.buffer.get_15m_context()
+            # 1. Get 15m context (request enough bars for indicators)
+            context = self.buffer.get_15m_context(history_size=150)
             
-            if context is not None:
+            if context is not None and len(context) >= 100:
                 # 2. Get Layer 2 Signal (Probability)
-                # Note: Classifier.predict should be updated to return float probability
                 signal_prob = self.classifier.predict(context) 
                 
                 if signal_prob > 0.5:
