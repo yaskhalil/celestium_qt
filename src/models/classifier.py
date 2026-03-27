@@ -22,14 +22,17 @@ class Classifier:
         except Exception as e:
             logger.warning("Could not load model, using mock predictions", error=str(e))
 
-    def predict(self, df: pl.DataFrame) -> bool:
-        """Predicts trade probability (Layer 2 Inference)."""
+    def predict(self, df: pl.DataFrame) -> float:
+        """
+        Predicts trade probability (Layer 2 Inference).
+        Returns a probability between 0.0 and 1.0.
+        """
         if df.is_empty():
-            return False
+            return 0.0
         
-        # Mock signal generation logic
-        # dmat = xgb.DMatrix(df.to_pandas())
-        # preds = self.model.predict(dmat)
+        # Mock signal generation logic for now
+        # In production: dmat = xgb.DMatrix(df.to_pandas())
+        # return self.model.predict(dmat)[0]
         
         logger.info("Classifier: Generating Prediction...")
-        return False
+        return 0.0 # Placeholder
