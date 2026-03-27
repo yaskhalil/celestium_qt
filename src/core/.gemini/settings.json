@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "celestium-state": {
+      "command": "python",
+      "args": [
+        "src/core/mcp_server.py"
+      ]
+    }
+  }
+}
