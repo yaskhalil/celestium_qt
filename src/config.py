@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     
     # Allocator Settings
     REFERENCE_ATR: float = 20.0
+    
+    # Advisor Settings
+    ADVISOR_URL: str = "http://localhost:11434/api/generate"
+    ADVISOR_MODEL: str = "quant-advisor" # Matches the 2026 Modelfile
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
