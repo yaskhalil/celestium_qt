@@ -14,4 +14,5 @@ dependencies = [
     "pytest",
     "torch",
     "pydantic-settings>=2.13.1",
+    "async-rithmic>=1.5.9",
 ]
