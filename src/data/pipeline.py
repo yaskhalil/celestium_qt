@@ -1,69 +1,78 @@
 import polars as pl
 from datetime import datetime
 import structlog
+from typing import Optional
 
 logger = structlog.get_logger()
 
-class PolarsPipeline:
-    """Real-time Polars resampling/buffering (2026 Edition)"""
+class LiveBuffer:
+    """
+    The 'Heartbeat': Maintains a rolling 1,000-row Polars DataFrame of 1m bars.
+    Provides the 15-minute context windows for Layer 1 (Hurst) and Layer 2 (XGBoost).
+    """
     
-    def __init__(self, window_size: str = "15m", stride: str = "1m"):
-        self.window_size = window_size
-        self.stride = stride
-        self.buffer = pl.DataFrame(
-            schema={
-                "timestamp": pl.Datetime,
-                "price": pl.Float64,
-                "volume": pl.Int64
-            }
-        )
+    def __init__(self, max_rows: int = 1000):
+        self.max_rows = max_rows
+        self.schema = {
+            "timestamp": pl.Datetime,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Int64
+        }
+        self.df = pl.DataFrame(schema=self.schema)
 
-    def add_tick(self, timestamp: datetime, price: float, volume: int):
-        """Adds a tick to the buffer."""
-        new_tick = pl.DataFrame({
+    def add_bar(self, timestamp: datetime, o: float, h: float, l: float, c: float, v: int):
+        """Adds a new 1m bar and prunes the buffer to max_rows."""
+        new_bar = pl.DataFrame({
             "timestamp": [timestamp],
-            "price": [price],
-            "volume": [volume]
-        })
-        self.buffer = pl.concat([self.buffer, new_tick])
+            "open": [o],
+            "high": [h],
+            "low": [l],
+            "close": [c],
+            "volume": [v]
+        }, schema=self.schema)
         
-        # Prune buffer to keep only last 24 hours of 1m data for Hurst/Regime context
-        limit = datetime.now().timestamp() - (24 * 3600)
-        # self.buffer = self.buffer.filter(pl.col("timestamp").dt.timestamp() > limit)
+        self.df = pl.concat([self.df, new_bar])
+        
+        if len(self.df) > self.max_rows:
+            self.df = self.df.tail(self.max_rows)
 
-    def resample_to_15m(self) -> pl.DataFrame:
+    def get_15m_context(self) -> Optional[pl.DataFrame]:
         """
-        Resamples 1m Rithmic ticks into 15m OHLCV bars using a sliding window.
-        Optimized for Hurst Exponent and Regime Detection.
+        Resamples the 1m buffer into 15m OHLCV bars.
+        Returns the latest context for inference.
         """
-        if self.buffer.is_empty():
-            return pl.DataFrame()
+        if self.df.is_empty():
+            return None
             
-        # 1. Group by 15m Dynamic Window
-        bars = (
-            self.buffer.sort("timestamp")
+        return (
+            self.df.sort("timestamp")
             .group_by_dynamic(
                 "timestamp", 
-                every=self.stride, # 1m stride for sliding window
-                period=self.window_size, # 15m lookback
-                include_boundaries=True
+                every="1m",    # 1m stride for sliding window
+                period="15m",  # 15m lookback
             )
             .agg([
-                pl.col("price").first().alias("open"),
-                pl.col("price").max().alias("high"),
-                pl.col("price").min().alias("low"),
-                pl.col("price").last().alias("close"),
-                pl.col("volume").sum().alias("volume"),
-                # Add log returns for Hurst calculation later
-                (pl.col("price").last().log() - pl.col("price").first().log()).alias("log_return")
+                pl.col("open").first(),
+                pl.col("high").max(),
+                pl.col("low").min(),
+                pl.col("close").last(),
+                pl.col("volume").sum()
             ])
+            .tail(1) # Get only the most recent 15m window
         )
-        
-        return bars
 
-    def get_hurst_context(self, min_periods: int = 30) -> pl.Series:
-        """Extracts the price series needed for Hurst calculation."""
-        bars = self.resample_to_15m()
-        if len(bars) < min_periods:
-            return pl.Series()
-        return bars["close"]
+    def get_hurst_series(self, window: int = 100) -> Optional[pl.Series]:
+        """Returns the closing price series for Hurst calculation."""
+        if len(self.df) < window:
+            return None
+        return self.df.tail(window)["close"]
+
+    @property
+    def latest_bar(self) -> Optional[dict]:
+        """Quick access to the last processed 1m bar."""
+        if self.df.is_empty():
+            return None
+        return self.df.tail(1).to_dicts()[0]
