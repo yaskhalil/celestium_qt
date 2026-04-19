@@ -1,79 +1,24 @@
 import polars as pl
-from datetime import datetime
+import pykx as kx
+from src.config import settings
 import structlog
 from typing import Optional
 
 logger = structlog.get_logger()
 
-class LiveBuffer:
+class KDBBuffer:
     """
-    The 'Heartbeat': Maintains a rolling 1,000-row Polars DataFrame of 1m bars.
-    Provides the 15-minute context windows for Layer 1 (Hurst) and Layer 2 (XGBoost).
+    KDB+ Buffer: Queries KDB+ for historical OHLCV data.
+    Provides context windows for feature calculation.
     """
-    
-    def __init__(self, max_rows: int = 1000):
-        self.max_rows = max_rows
-        self.schema = {
-            "timestamp": pl.Datetime,
-            "open": pl.Float64,
-            "high": pl.Float64,
-            "low": pl.Float64,
-            "close": pl.Float64,
-            "volume": pl.Int64
-        }
-        self.df = pl.DataFrame(schema=self.schema)
+    def __init__(self):
+        self.kx_conn = kx.SyncQConnection(host=settings.KDB_HOST, port=settings.KDB_PORT)
 
-    def add_bar(self, timestamp: datetime, o: float, h: float, l: float, c: float, v: int):
-        """Adds a new 1m bar and prunes the buffer to max_rows."""
-        new_bar = pl.DataFrame({
-            "timestamp": [timestamp],
-            "open": [o],
-            "high": [h],
-            "low": [l],
-            "close": [c],
-            "volume": [v]
-        }, schema=self.schema)
-        
-        self.df = pl.concat([self.df, new_bar])
-        
-        if len(self.df) > self.max_rows:
-            self.df = self.df.tail(self.max_rows)
-
-    def get_15m_context(self, history_size: int = 150) -> Optional[pl.DataFrame]:
+    def get_context(self, symbol: str, window: int = 150) -> pl.DataFrame:
         """
-        Resamples the 1m buffer into 15m OHLCV bars.
-        Returns a history of context windows for feature calculation.
+        Query KDB+ for the last N bars for the given symbol.
+        Returns the result as a Polars DataFrame.
         """
-        if self.df.is_empty():
-            return None
-            
-        resampled = (
-            self.df.sort("timestamp")
-            .group_by_dynamic(
-                "timestamp", 
-                every="1m",    # 1m stride for sliding window
-                period="15m",  # 15m lookback
-            )
-            .agg([
-                pl.col("open").first().alias("open"),
-                pl.col("high").max().alias("high"),
-                pl.col("low").min().alias("low"),
-                pl.col("close").last().alias("close"),
-                pl.col("volume").sum().alias("volume")
-            ])
-        )
-        
-        return resampled.tail(history_size)
-
-    def get_hurst_series(self, window: int = 100) -> Optional[pl.Series]:
-        """Returns the closing price series for Hurst calculation."""
-        if len(self.df) < window:
-            return None
-        return self.df.tail(window)["close"]
-
-    @property
-    def latest_bar(self) -> Optional[dict]:
-        """Quick access to the last processed 1m bar."""
-        if self.df.is_empty():
-            return None
-        return self.df.tail(1).to_dicts()[0]
+        query = f"neg[{window}] sublist select from ohlcv where sym=`{symbol}"
+        q_table = self.kx_conn(query)
+        return pl.from_arrow(q_table.to_arrow())
