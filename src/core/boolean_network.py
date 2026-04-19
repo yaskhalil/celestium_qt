@@ -39,3 +39,17 @@ class BooleanStateSpace:
             state |= (1 << 2)
             
         return state
+
+    def is_in_attractor(self, state: int) -> bool:
+        """
+        Check if state belongs to target attractor set A.
+        
+        Formal Definition:
+        Let S = {0, 1}^n be the state space.
+        Let F: S -> S be the synchronous update function.
+        A subset A ⊆ S is an attractor if F(A) = A.
+        
+        For this implementation, we define a static target attractor set A = {1, 3, 7}.
+        """
+        target_attractors = {1, 3, 7}
+        return state in target_attractors

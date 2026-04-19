@@ -41,3 +41,13 @@ def test_map_to_bits_partial():
     # adx > 25 (20 > 25) -> Bit 2 = 0
     # Integer = 0 + 2 + 0 = 2
     assert state == 2
+
+def test_is_in_attractor():
+    bss = BooleanStateSpace()
+    # target_attractors = {1, 3, 7}
+    assert bss.is_in_attractor(1) is True
+    assert bss.is_in_attractor(3) is True
+    assert bss.is_in_attractor(7) is True
+    assert bss.is_in_attractor(0) is False
+    assert bss.is_in_attractor(2) is False
+    assert bss.is_in_attractor(4) is False
