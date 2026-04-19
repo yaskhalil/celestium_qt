@@ -1,87 +1,55 @@
-import asyncio
 import structlog
-from datetime import datetime
-from async_rithmic import RithmicClient
+import pykx as kx
+import polars as pl
+from webullsdktrade.api import API
+from webullsdkcore.client import ApiClient
 from src.config import settings
-from src.data.pipeline import LiveBuffer
 
 logger = structlog.get_logger()
 
-class RithmicIngestor:
+class WebullIngestor:
     """
-    The 'Eyes': Establishes connection to Apex's servers via Rithmic protocol.
-    Handles authentication and pushes incoming 1m bars into the LiveBuffer.
+    The 'Eyes': Fetches historical and real-time bars from Webull API
+    and persists them to KDB+ for the analytical pipeline.
     """
     
-    def __init__(self, buffer: LiveBuffer):
-        self.buffer = buffer
-        self.client: RithmicClient = None
-        self.is_running = False
-
-    async def connect(self):
-        """Authenticates with Rithmic."""
-        logger.info("Ingestor: Connecting to Rithmic...", user=settings.RITHMIC_USERNAME)
-        
-        # Note: System name for Apex is typically "Rithmic Paper Trading" 
-        # or "Apex" depending on the specific environment provided by Rithmic.
-        self.client = RithmicClient(
-            user=settings.RITHMIC_USERNAME,
-            password=settings.RITHMIC_PASSWORD,
-            system_name=settings.RITHMIC_SYSTEM_NAME
-        )
-        
+    def __init__(self, api_client: ApiClient):
+        self.api = API(api_client)
         try:
-            await self.client.connect()
-            logger.info("Ingestor: Rithmic Connected.")
+            self.kx_conn = kx.SyncQConnection(host=settings.KDB_HOST, port=settings.KDB_PORT)
+            logger.info("Ingestor: Connected to KDB+", host=settings.KDB_HOST, port=settings.KDB_PORT)
         except Exception as e:
-            logger.error("Ingestor: Connection Failed", error=str(e))
+            logger.error("Ingestor: KDB+ Connection Failed", error=str(e))
             raise
 
-    async def _on_bar_update(self, bar):
-        """Callback for incoming 1m bar data."""
+    def fetch_and_persist(self, symbol: str):
+        """
+        Fetches hourly bars from Webull and inserts them into KDB+ 'ohlcv' table.
+        Schema: [timestamp, sym, open, high, low, close, volume]
+        """
+        logger.info("Ingestor: Fetching data from Webull", symbol=symbol)
         try:
-            # Rithmic bar object structure (Simplified based on async_rithmic docs)
-            # Typically contains: timestamp, open, high, low, close, volume
-            self.buffer.add_bar(
-                timestamp=bar.timestamp,
-                o=bar.open,
-                h=bar.high,
-                l=bar.low,
-                c=bar.close,
-                v=bar.volume
-            )
-            logger.debug("Ingestor: 1m Bar Received", timestamp=bar.timestamp, close=bar.close)
-        except Exception as e:
-            logger.error("Ingestor: Error processing bar", error=str(e))
+            # Fetch hourly bars from Webull
+            bars = self.api.get_bars(symbol, interval="1h")
+            if not bars:
+                logger.warning("Ingestor: No bars returned from Webull", symbol=symbol)
+                return
 
-    async def start_streaming(self, symbol: str = settings.SYMBOL, exchange: str = settings.EXCHANGE):
-        """Subscribes to 1m bars for the target symbol."""
-        if not self.client:
-            await self.connect()
+            # Convert to Polars -> PyArrow -> KDB+
+            df = pl.from_dicts(bars)
             
-        logger.info("Ingestor: Subscribing to 1m bars", symbol=symbol)
-        
-        # Using the history plant to stream real-time bars (some Rithmic setups use ticker for ticks)
-        # async_rithmic often provides a dedicated bar subscription method
-        try:
-            await self.client.history.subscribe_bars(
-                symbol=symbol,
-                exchange=exchange,
-                bar_type="MINUTE",
-                bar_count=1,
-                callback=self._on_bar_update
-            )
-            self.is_running = True
+            # Ensure 'sym' column exists for KDB+ schema if not returned by API
+            if "sym" not in df.columns:
+                df = df.with_columns(pl.lit(symbol).alias("sym"))
             
-            while self.is_running:
-                await asyncio.sleep(1)
-                
+            # Map columns to match KDB+ schema if necessary
+            # Standard Webull bar keys are often 'open', 'high', 'low', 'close', 'volume', 'timestamp'
+            # The requested schema: [timestamp, sym, open, high, low, close, volume]
+            
+            # Persist to KDB+ using PyArrow for efficiency
+            self.kx_conn.insert("ohlcv", kx.toq(df.to_arrow()))
+            logger.info("Ingestor: Data persisted to KDB+", symbol=symbol, count=len(df))
+            
         except Exception as e:
-            logger.error("Ingestor: Streaming failed", error=str(e))
-            self.is_running = False
-
-    def stop(self):
-        self.is_running = False
-        if self.client:
-             # In a real scenario, we'd call await self.client.disconnect()
-             pass
+            logger.error("Ingestor: Fetch and Persist failed", symbol=symbol, error=str(e))
+            raise
