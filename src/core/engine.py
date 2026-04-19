@@ -1,79 +1,126 @@
-import asyncio
 import structlog
-from src.data.pipeline import LiveBuffer
-from src.core.oracle import Oracle, AccountState, AccountStatus
-from src.core.allocator import Allocator
-from src.core.oracle import Oracle, AccountState, AccountStatus
-from src.execution.router import Router
-from src.models.classifier import Classifier
+from typing import Optional
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import asyncio
 
+from src.config import settings
+from src.data.pipeline import KDBBuffer
+from src.core.oracle import Oracle, AccountState
+from src.core.boolean_network import BooleanStateSpace
+from src.execution.router import WebullRouter
+from src.models.classifier import Classifier
+from src.core.allocator import Allocator
 from src.core.advisor import Advisor
 
-class Engine:
-    """Orchestrates Data -> Features -> Model -> Allocator -> Oracle -> Router -> Advisor"""
+logger = structlog.get_logger()
 
-    def __init__(self, client: RithmicClient, account_state: Optional[AccountState] = None):
-        # Load state from disk if not provided
+class ScheduledEngine:
+    """
+    Scheduled Engine: Triggers 'tick' periodically using APScheduler.
+    Orchestrates Data -> Boolean Attractor -> Classifier -> Oracle -> Router.
+    """
+
+    def __init__(self, webull_client, account_state: Optional[AccountState] = None):
         self.account_state = account_state or AccountState.load()
-        self.buffer = LiveBuffer()
+        self.buffer = KDBBuffer()
+        self.bn = BooleanStateSpace()
         self.oracle = Oracle(self.account_state)
         self.allocator = Allocator()
         self.classifier = Classifier()
-        self.router = Router(client, self.account_state)
+        self.router = WebullRouter(webull_client, self.account_state)
         self.advisor = Advisor()
+        
+        self.scheduler = BackgroundScheduler()
         self.running = False
-        self.veto_logs = [] # To be consumed by Advisor
-        self.current_hurst = 0.5 # Layer 1 state
+        self.veto_logs = []
 
-    async def run(self, symbol: str = settings.SYMBOL):
-        """Main Loop for the engine."""
-        self.running = True
-        logger.info("Engine: Starting Core Loop...")
+    def tick(self):
+        """Triggered every hour during market hours (9:30 AM - 4:00 PM ET)."""
+        logger.info("Engine: Tick triggered")
+        symbol = settings.SYMBOL
 
+        # 1. Fetch context from KDBBuffer
         try:
-            while self.running:
-                # 1. EOD Check (Panic Flatten if near 4:59 PM ET)
-                if not self.oracle.state.is_trading_allowed:
-                    if self.router.current_position != 0:
-                        await self.router.panic_flatten(symbol)
-                        await self.advisor.generate_summary(
-                            self.account_state, 
-                            self.veto_logs, 
-                            {'hurst': self.current_hurst}
-                        )
-                    await asyncio.sleep(60)
-                    continue
+            context = self.buffer.get_context(symbol, window=150)
+        except Exception as e:
+            logger.error("Engine: Failed to fetch context", error=str(e))
+            return
 
-                # 2. Get 15m context
-                context = self.buffer.get_15m_context(history_size=150)
+        if context.is_empty() or len(context) < 100:
+            logger.warning("Engine: Insufficient data context", length=len(context))
+            return
 
-                if context is not None and len(context) >= 100:
-                    # Update internal context for Advisor
-                    # ... logic to calculate hurst ...
+        # 2. Map context to Boolean state bits
+        state = self.bn.map_to_bits(context)
+        
+        # 3. Check if state is in an attractor
+        if not self.bn.is_in_attractor(state):
+            logger.info("Engine: State not in attractor, skipping", state=state)
+            self.veto_logs.append(f"Not in attractor: {state}")
+            return
+
+        # 4. Proceed with Layer 2 (Classifier)
+        signal_prob = self.classifier.predict(context)
+        
+        if signal_prob > settings.SIGNAL_THRESHOLD:
+            # 5. Allocator
+            atr = context["atr"].tail(1).item() if "atr" in context.columns else 1.0
+            size = self.allocator.calculate_size(signal_prob, atr, self.account_state.balance)
+            
+            if size > 0:
+                # 6. Oracle validation
+                decision_price = context["close"].tail(1).item()
+                if self.oracle.validate_trade(size, decision_price, "BUY"):
+                    # 7. Router execution (using Webull logic)
+                    logger.info("Engine: SIGNAL APPROVED. Executing trade.", 
+                                size=size, price=decision_price)
                     
-                    # 3. Get Layer 2 Signal
-                    signal_prob = self.classifier.predict(context) 
+                    # Router.execute_trade is async, so we run it in a new event loop
+                    # since we are in a background thread from BackgroundScheduler.
+                    asyncio.run(self.router.execute_trade(symbol, size, "BUY", price=decision_price))
+                else:
+                    self.veto_logs.append(f"Oracle vetoed: prob {signal_prob}")
+                    logger.info("Engine: Signal vetoed by Oracle")
+        else:
+            logger.debug("Engine: Signal below threshold", prob=signal_prob)
 
-                    if signal_prob > 0.6: 
-                        # 4. Allocator
-                        atr = context["atr"].item() if "atr" in context.columns else 10.0
-                        size = self.allocator.calculate_size(signal_prob, atr, self.oracle.state.balance)
-
-                        if size > 0 and self.router.current_position == 0:
-                            # 5. Oracle Final Gate
-                            price = context["close"].item()
-                            if self.oracle.validate_trade(size, price, "BUY"):
-                                # 6. Router
-                                await self.router.execute_trade(symbol, size, "BUY")
-                            else:
-                                self.veto_logs.append(f"Vetoed signal at {price} prob {signal_prob}")
-        finally:
-            # Final Audit on shutdown
-            await self.advisor.generate_summary(
-                self.account_state, 
-                self.veto_logs, 
-                {'hurst': self.current_hurst}
-            )
+    def start(self):
+        """Starts the scheduler."""
+        logger.info("Engine: Starting scheduler")
+        # Market hours: 9 AM - 4 PM ET (cron triggered at start of every hour)
+        self.scheduler.add_job(
+            self.tick, 
+            CronTrigger(hour='9-16', minute='0', timezone='US/Eastern'),
+            id='market_tick'
+        )
+        self.scheduler.start()
+        self.running = True
 
     def stop(self):
+        """Stops the scheduler and generates summary."""
+        logger.info("Engine: Stopping scheduler")
+        self.scheduler.shutdown()
         self.running = False
+        
+        asyncio.run(self.advisor.generate_summary(
+            self.account_state, 
+            self.veto_logs, 
+            {} # Final metrics context
+        ))
+
+if __name__ == "__main__":
+    # Scheduler initialization replaced main loop
+    import time
+    from webullsdkcore.client import ApiClient
+    
+    # Placeholder for actual client initialization
+    client = ApiClient(settings.WEBULL_APP_KEY, settings.WEBULL_APP_SECRET)
+    engine = ScheduledEngine(client)
+    engine.start()
+    
+    try:
+        while True:
+            time.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        engine.stop()
