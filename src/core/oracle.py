@@ -1,9 +1,8 @@
 from enum import Enum
-from datetime import datetime, time
-from typing import List, Optional, Annotated
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from datetime import datetime, time, timezone
+from typing import List, Optional, Tuple
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 import structlog
-import json
 import os
 from src.config import settings
 
@@ -20,101 +19,164 @@ class AccountStatus(str, Enum):
 class DailySession(BaseModel):
     date: datetime
     pnl: float
+    trade_count: int = 0
     is_closed: bool = False
 
 class AccountState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
-    balance: float
-    equity: float
-    max_drawdown_limit: float = 25000.0
-    safety_net_floor: float = 26100.0
-    daily_loss_limit: float = 500.0
+    balance: float = 50000.0
+    equity: float = 50000.0
+    settled_cash: float = 0.0
+    unsettled_cash: float = 0.0
+    safety_net_floor: float = 47500.0
+    daily_loss_limit: float = 1100.0
+    soft_kill_switch: float = 1050.0
+    reserve_threshold: float = 2600.0
+    daily_profit_ceiling: float = 1200.0
     
     current_daily_pnl: float = 0.0
+    current_daily_trades: int = 0
+    max_daily_trades: int = 50
+    hurst_threshold: float = 0.42
+    current_entry_time: Optional[datetime] = None
+    
     total_profit_since_payout: float = 0.0
     trading_history: List[DailySession] = []
     
     status: AccountStatus = AccountStatus.ACTIVE
-    last_updated: datetime = Field(default_factory=datetime.now)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @model_validator(mode='after')
+    def sync_cash_on_init(self) -> 'AccountState':
+        if self.settled_cash == 0.0 and self.unsettled_cash == 0.0:
+            self.settled_cash = self.balance
+        return self
 
     @property
-    def is_trading_allowed(self) -> bool:
-        now_et = datetime.now().time()
+    def liquid_payout_capital(self) -> float:
+        return max(0.0, self.equity - (50000.0 + self.reserve_threshold))
+
+    def is_trading_allowed(self, current_time: Optional[time] = None) -> bool:
+        # Note: Bulenox times are ET, Rithmic uses UTC. 
+        # For simplicity in this logic, we use time of day.
+        now_et = current_time or datetime.now(timezone.utc).time()
         if now_et >= time(16, 55) and now_et <= time(18, 0):
             return False
         return self.status == AccountStatus.ACTIVE
 
     def save(self):
-        """Persists state to local JSON file."""
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         with open(STATE_FILE, "w") as f:
             f.write(self.model_dump_json())
-        logger.debug("AccountState: Persisted to disk")
 
     @classmethod
     def load(cls) -> "AccountState":
-        """Loads state from local JSON file or returns default."""
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, "r") as f:
                     return cls.model_validate_json(f.read())
             except Exception as e:
-                logger.error("Failed to load state, starting fresh", error=str(e))
-        
-        # Default state if no file exists
+                logger.error("Failed to load state", error=str(e))
         return cls(
-            balance=27000.0, 
-            equity=27000.0,
-            safety_net_floor=settings.BALANCE_FLOOR,
-            daily_loss_limit=settings.DAILY_LOSS_LIMIT
+            daily_profit_ceiling=settings.DAILY_PROFIT_CEILING,
+            hurst_threshold=getattr(settings, 'HURST_THRESHOLD', 0.42),
+            max_daily_trades=getattr(settings, 'MAX_DAILY_TRADES', 50)
         )
 
 class Oracle:
-    """The Risk Firewall (Apex 4.0 Rules - 2026 Edition)"""
+    """The Risk Firewall (Bulenox 50K EOD - 2026 Edition)"""
     
     def __init__(self, state: AccountState):
         self.state = state
 
-    def validate_trade(self, quantity: int, price: float, side: str) -> bool:
-        """Enforces Apex 4.0 Safety Net, 50% Consistency, and 2026 DLL Pausing."""
-        logger.info("Oracle: Validating Trade Request", quantity=quantity, side=side, status=self.state.status)
-
-        if not self.state.is_trading_allowed:
+    def validate_trade(self, quantity: int, price: float, side: str, 
+                       current_hurst: float = 0.0, 
+                       current_time: Optional[time] = None) -> bool:
+        """Enforces Hardened Evaluator Rules: DLL, Daily Cap, Trade Cap, Hurst."""
+        
+        if not self.state.is_trading_allowed(current_time):
             logger.error("VETO: Trading not allowed", status=self.state.status)
             return False
 
+        # 1. Daily Signal Cap (Compliance)
+        if self.state.current_daily_trades >= self.state.max_daily_trades:
+            logger.error("VETO: Daily Trade Cap Reached", count=self.state.current_daily_trades)
+            return False
+
+        # 2. Hurst Gate (Regime Persistence)
+        if current_hurst < self.state.hurst_threshold:
+            logger.debug("VETO: Hurst below threshold", hurst=current_hurst, min=self.state.hurst_threshold)
+            return False
+
+        # 3. DLL and Profit Ceiling
         if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS
             self.state.save()
-            logger.error("VETO: Daily Loss Limit Breached.", limit=self.state.daily_loss_limit)
+            logger.error("VETO: Hard DLL Breached")
+            return False
+            
+        if self.state.current_daily_pnl >= self.state.daily_profit_ceiling:
+            logger.error("VETO: Daily Profit Ceiling Reached")
             return False
 
+        # 4. EOD Floor
         if self.state.balance <= self.state.safety_net_floor:
-            logger.error("VETO: Safety Net Floor reached!", balance=self.state.balance)
+            logger.error("VETO: Floor Breached")
             return False
 
-        projected_total_profit = self.state.total_profit_since_payout + max(0, self.state.current_daily_pnl)
-        if projected_total_profit > 0:
-            consistency_ratio = self.state.current_daily_pnl / projected_total_profit
-            if consistency_ratio > 0.50 and len(self.state.trading_history) < 5:
-                logger.warning("CONSISTENCY ALERT: Today's profit > 50% of total.", ratio=consistency_ratio)
+        # 5. GFV Protection (T+1 Settlement for $400 Equity Account)
+        if side == "BUY":
+            cost = quantity * price
+            if cost > self.state.settled_cash:
+                logger.error("VETO: GFV Risk - Insufficient Settled Cash", 
+                             required=cost, available=self.state.settled_cash)
+                return False
 
-        if quantity > settings.MAX_POSITION_SIZE:
-             logger.error("VETO: Max position size exceeded", max=settings.MAX_POSITION_SIZE, requested=quantity)
-             return False
-
-        logger.info("Oracle: Trade VALIDATED")
         return True
 
-    def update_session(self, pnl: float):
-        """Updates the internal state and persists to disk."""
-        self.state.current_daily_pnl += pnl
-        self.state.balance += pnl
-        self.state.equity = self.state.balance
+    def process_eod_anchor(self):
+        """Finalizes daily session and handles T+1 cash settlement."""
+        new_potential_floor = self.state.balance - 2500.0
+        if new_potential_floor > self.state.safety_net_floor:
+            self.state.safety_net_floor = min(new_potential_floor, 50100.0)
         
-        if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
-            self.state.status = AccountStatus.PAUSED_DAILY_LOSS
+        # T+1 Settlement: Unsettled cash from today becomes settled for tomorrow
+        self.state.settled_cash += self.state.unsettled_cash
+        self.state.unsettled_cash = 0.0
+        
+        session = DailySession(
+            date=datetime.now(timezone.utc), 
+            pnl=self.state.current_daily_pnl, 
+            trade_count=self.state.current_daily_trades,
+            is_closed=True
+        )
+        self.state.trading_history.append(session)
+        self.state.total_profit_since_payout += max(0, self.state.current_daily_pnl)
+
+        # Reset daily PnL and trade count
+        self.state.current_daily_pnl = 0.0
+        self.state.current_daily_trades = 0
+        
+        # Reset status if it was just paused for the day
+        if self.state.status == AccountStatus.PAUSED_DAILY_LOSS:
+            self.state.status = AccountStatus.ACTIVE
             
-        self.state.last_updated = datetime.now()
-        self.state.save() # Auto-persist
+        self.state.save()
+
+    def update_session(self, amount: float, quantity: int = 0, side: str = "BUY"):
+        """Updates intraday balance and manages T+1 cash pools."""
+        commissions = quantity * settings.COMMISSION_PER_LOT
+        
+        if side == "BUY":
+            # cost is positive, reduction in balance
+            self.state.settled_cash -= (amount + commissions)
+        elif side == "SELL":
+            # amount is proceeds, added to unsettled
+            self.state.unsettled_cash += (amount - commissions)
+        
+        # Sync balance to the sum of cash pools
+        self.state.balance = self.state.settled_cash + self.state.unsettled_cash
+        self.state.equity = self.state.balance
+        self.state.current_daily_trades += 1
+        self.state.save()

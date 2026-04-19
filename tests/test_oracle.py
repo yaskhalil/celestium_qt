@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, time
 from src.core.oracle import Oracle, AccountState, AccountStatus, DailySession
 
 def test_daily_loss_limit_pausing():
@@ -13,14 +13,14 @@ def test_daily_loss_limit_pausing():
     oracle = Oracle(state)
     
     # Trade 1: Small loss - Should be allowed
-    assert oracle.validate_trade(1, 15000.0, "BUY") is True
+    assert oracle.validate_trade(1, 15000.0, "BUY", current_time=time(10, 0)) is True
     
     # Simulate a loss that hits the DLL
     oracle.update_session(-60.0) 
     assert state.status == AccountStatus.PAUSED_DAILY_LOSS
     
     # Trade 2: Should be blocked
-    assert oracle.validate_trade(1, 15000.0, "BUY") is False
+    assert oracle.validate_trade(1, 15000.0, "BUY", current_time=time(10, 0)) is False
 
 def test_safety_net_floor():
     """Confirms the Oracle blocks trades below $26,100."""
@@ -30,7 +30,7 @@ def test_safety_net_floor():
         safety_net_floor=26100.0
     )
     oracle = Oracle(state)
-    assert oracle.validate_trade(1, 15000.0, "BUY") is False
+    assert oracle.validate_trade(1, 15000.0, "BUY", current_time=time(10, 0)) is False
 
 def test_consistency_alert_logic():
     """Simulates a 'Big Win' and checks for the consistency alert."""
@@ -45,7 +45,31 @@ def test_consistency_alert_logic():
     
     # Consistency Ratio = 1000 / 1500 = 66% (> 50%)
     # Current logic only warns, but we can verify it logs.
-    assert oracle.validate_trade(1, 15000.0, "BUY") is True
+    assert oracle.validate_trade(1, 15000.0, "BUY", current_time=time(10, 0)) is True
+
+def test_account_state_cash_fields():
+    """Verifies that AccountState has settled_cash and unsettled_cash fields."""
+    state = AccountState(balance=400.0)
+    assert hasattr(state, 'settled_cash')
+    assert hasattr(state, 'unsettled_cash')
+    # Should default to balance if not provided
+    assert state.settled_cash == 400.0
+    assert state.unsettled_cash == 0.0
+
+def test_gfv_protection():
+    """Confirms the Oracle blocks BUY trades exceeding settled cash."""
+    state = AccountState(
+        balance=400.0,
+        settled_cash=100.0,
+        unsettled_cash=300.0
+    )
+    oracle = Oracle(state)
+    
+    # Cost: 2 shares * $60 = $120. Settled: $100. Should be blocked.
+    assert oracle.validate_trade(2, 60.0, "BUY", current_time=time(10, 0)) is False
+    
+    # Cost: 1 share * $60 = $60. Settled: $100. Should be allowed.
+    assert oracle.validate_trade(1, 60.0, "BUY", current_time=time(10, 0)) is True
 
 def test_eod_time_limit():
     """Simulates trading during the Apex flat period (4:55 PM - 6:00 PM ET)."""
