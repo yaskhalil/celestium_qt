@@ -1,24 +1,20 @@
 import polars as pl
-import pykx as kx
-from src.config import settings
-import structlog
+from src.data.duck_storage import DuckDBStorage
 from typing import Optional
 
 logger = structlog.get_logger()
 
-class KDBBuffer:
+class DuckDBBuffer:
     """
-    KDB+ Buffer: Queries KDB+ for historical OHLCV data.
+    DuckDB Buffer: Queries DuckDB for historical OHLCV data.
     Provides context windows for feature calculation.
     """
     def __init__(self):
-        self.kx_conn = kx.SyncQConnection(host=settings.KDB_HOST, port=settings.KDB_PORT)
+        self.storage = DuckDBStorage()
 
     def get_context(self, symbol: str, window: int = 150) -> pl.DataFrame:
         """
-        Query KDB+ for the last N bars for the given symbol.
+        Query DuckDB for the last N bars for the given symbol.
         Returns the result as a Polars DataFrame.
         """
-        query = f"neg[{window}] sublist select from ohlcv where sym=`{symbol}"
-        q_table = self.kx_conn(query)
-        return pl.from_arrow(q_table.to_arrow())
+        return self.storage.fetch_ohlcv(symbol, limit=window)
