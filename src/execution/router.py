@@ -44,8 +44,35 @@ class WebullRouter:
             self.state.save()
             logger.info("Router: Position Updated", position=self.current_position)
 
+    async def _verify_position(self, symbol: str):
+        """Fetches the actual position from Webull to prevent ghost positions."""
+        try:
+            # get_account_positions is likely sync in the SDK
+            response = await asyncio.to_thread(
+                self.api.account_v2.get_account_positions,
+                settings.WEBULL_ACCOUNT_ID
+            )
+            
+            # response is typically a list of position dicts
+            positions = response if isinstance(response, list) else []
+            symbol_position = next((p for p in positions if p.get("symbol") == symbol), None)
+            
+            if symbol_position:
+                qty = int(float(symbol_position.get("position", 0)))
+                self.current_position = qty
+                logger.info("Router: Position Verified", symbol=symbol, position=self.current_position)
+            else:
+                self.current_position = 0
+                logger.info("Router: Position Verified (None)", symbol=symbol)
+                
+        except Exception as e:
+            logger.error("Router: Position Verification Failed", error=str(e))
+
     async def execute_trade(self, symbol: str, quantity: int, side: str, price: Optional[float] = None):
         """Places orders with Compliance Guards via Webull TPA."""
+        
+        # 0. Harden: Verify actual position before proceeding
+        await self._verify_position(symbol)
         
         # 1. Consistency Guard: Verify Ceiling
         if self.state.current_daily_pnl >= self.state.daily_profit_ceiling:
