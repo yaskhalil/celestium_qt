@@ -2,6 +2,9 @@ import hashlib
 import hmac
 import base64
 import httpx
+import uuid
+import json
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 class WebullClient:
@@ -57,6 +60,69 @@ class WebullClient:
         ).digest()
         
         return base64.b64encode(signature).decode("utf-8")
+
+    async def request(
+        self, 
+        method: str, 
+        uri: str, 
+        params: Optional[Dict[str, Any]] = None, 
+        body: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        params = params or {}
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        nonce = str(uuid.uuid4())
+        
+        body_str = json.dumps(body) if body is not None else None
+        
+        signature = self._generate_signature(
+            uri=uri,
+            params=params,
+            timestamp=timestamp,
+            nonce=nonce,
+            body=body_str
+        )
+        
+        headers = {
+            "x-app-key": self.app_key,
+            "x-timestamp": timestamp,
+            "x-signature-nonce": nonce,
+            "x-signature-algorithm": "HMAC-SHA1",
+            "x-signature-version": "1.0",
+            "x-signature": signature,
+            "Content-Type": "application/json"
+        }
+        
+        response = await self.client.request(
+            method=method,
+            url=uri,
+            params=params,
+            content=body_str,
+            headers=headers
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_account_balance(self, account_id: str) -> Dict[str, Any]:
+        return await self.request("GET", "/openapi/account/balance", params={"account_id": account_id})
+
+    async def get_positions(self, account_id: str) -> Dict[str, Any]:
+        return await self.request("GET", "/openapi/account/positions", params={"account_id": account_id})
+
+    async def place_order(self, account_id: str, order_params: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.request(
+            "POST", 
+            "/openapi/account/orders/place", 
+            params={"account_id": account_id}, 
+            body=order_params
+        )
+
+    async def get_bars(self, symbol: str, interval: str, count: int = 150) -> Dict[str, Any]:
+        params = {
+            "symbol": symbol,
+            "timespan": interval,
+            "count": count
+        }
+        return await self.request("GET", "/market-data/bars", params=params)
 
     async def close(self):
         await self.client.aclose()
