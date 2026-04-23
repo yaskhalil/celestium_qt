@@ -1,0 +1,18 @@
+{
+    "signal_threshold": 0.42,
+    "max_position_size_mini": 10,
+    "max_position_size_micro": 100,
+    "daily_loss_limit": 20.0,
+    "soft_kill_switch": 15.0,
+    "daily_profit_ceiling": 50.0,
+    "balance_floor": 300.0,
+    "starting_balance": 400.0,
+    "tick_value": 0.01,
+    "pt_multiplier": 1.0,
+    "sl_multiplier": 0.5,
+    "shadow_mode": true,
+    "symbol": "SPY",
+    "exchange": "NASD",
+    "hurst_threshold": 0.42,
+    "max_daily_trades": 50
+}
