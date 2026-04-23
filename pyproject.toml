@@ -13,8 +13,6 @@ dependencies = [
     "pytest",
     "torch",
     "pydantic-settings>=2.13.1",
-    "webull-python-sdk-core",
-    "webull-python-sdk-trade",
     "duckdb",
     "apscheduler",
     "scikit-learn>=1.8.0",

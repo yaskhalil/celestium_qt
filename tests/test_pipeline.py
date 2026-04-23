@@ -2,20 +2,15 @@ import pytest
 import polars as pl
 from datetime import datetime
 from unittest.mock import MagicMock, patch
-import pyarrow as pa
-from src.data.pipeline import KDBBuffer
+from src.data.pipeline import DuckDBBuffer
 
-def test_kdb_buffer_get_context():
-    """Confirms KDBBuffer queries KDB+ and returns a Polars DataFrame."""
-    with patch("pykx.SyncQConnection") as mock_conn_class:
-        mock_conn = MagicMock()
-        mock_conn_class.return_value = mock_conn
+def test_duckdb_buffer_get_context():
+    """Confirms DuckDBBuffer queries DuckDB and returns a Polars DataFrame."""
+    with patch("src.data.pipeline.DuckDBStorage") as mock_storage_class:
+        mock_storage = MagicMock()
+        mock_storage_class.return_value = mock_storage
         
-        # Mock the Q table returned by KDB+
-        mock_q_table = MagicMock()
-        mock_conn.return_value = mock_q_table
-        
-        # Create a sample pyarrow table
+        # Create a sample Polars DataFrame
         df_data = pl.DataFrame({
             "timestamp": [datetime(2026, 1, 1, 9, 0)],
             "open": [100.0],
@@ -24,18 +19,16 @@ def test_kdb_buffer_get_context():
             "close": [102.0],
             "volume": [1000]
         })
-        mock_q_table.to_arrow.return_value = df_data.to_arrow()
+        mock_storage.fetch_ohlcv.return_value = df_data
         
-        buffer = KDBBuffer()
+        buffer = DuckDBBuffer()
         context = buffer.get_context("AAPL", window=100)
         
-        # Verify connection was initialized
-        # Note: Depending on where KDBBuffer is defined, we might need to adjust the patch path
-        mock_conn_class.assert_called_once()
+        # Verify storage was initialized
+        mock_storage_class.assert_called_once()
         
-        # Verify query was called correctly for KDB+
-        expected_query = "neg[100] sublist select from ohlcv where sym=`AAPL"
-        mock_conn.assert_called_once_with(expected_query)
+        # Verify fetch_ohlcv was called correctly
+        mock_storage.fetch_ohlcv.assert_called_once_with("AAPL", limit=100)
         
         # Verify result is a Polars DataFrame
         assert isinstance(context, pl.DataFrame)

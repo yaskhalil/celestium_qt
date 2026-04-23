@@ -1,4 +1,5 @@
 import polars as pl
+import structlog
 from src.data.duck_storage import DuckDBStorage
 from typing import Optional
 
