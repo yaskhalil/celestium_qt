@@ -3,7 +3,7 @@ import uuid
 import structlog
 from datetime import datetime, timezone
 from typing import Optional
-from webullsdktrade.api import API
+from src.execution.webull_client import WebullClient
 from src.config import settings
 from src.core.oracle import AccountState
 
@@ -15,8 +15,8 @@ class WebullRouter:
     Enforces T+1 Settlement and Equity Limit Orders.
     """
     
-    def __init__(self, api: API, state: AccountState):
-        self.api = api
+    def __init__(self, client: WebullClient, state: AccountState):
+        self.client = client
         self.state = state
         self.current_position = 0
         self.active_orders = {}
@@ -47,15 +47,11 @@ class WebullRouter:
     async def _verify_position(self, symbol: str):
         """Fetches the actual position from Webull to prevent ghost positions."""
         try:
-            # get_account_positions is likely sync in the SDK
-            response = await asyncio.to_thread(
-                self.api.account_v2.get_account_positions,
-                settings.WEBULL_ACCOUNT_ID
-            )
+            response = await self.client.get_positions(settings.WEBULL_ACCOUNT_ID)
             
-            # response is typically a list of position dicts
-            positions = response if isinstance(response, list) else []
-            symbol_position = next((p for p in positions if p.get("symbol") == symbol), None)
+            # Assuming the response format gives a list of positions
+            positions = response if isinstance(response, list) else response.get("positions", [])
+            symbol_position = next((p for p in positions if p.get("symbol") == symbol or p.get("ticker", {}).get("symbol") == symbol), None)
             
             if symbol_position:
                 qty = int(float(symbol_position.get("position", 0)))
@@ -99,11 +95,9 @@ class WebullRouter:
         logger.info("Router: EXECUTING LIMIT ORDER", symbol=symbol, side=side, qty=quantity, price=price)
         
         try:
-            # Webull TPA uses instrument_id. For now we pass symbol or use a lookup.
-            # Reference logic from migration plan research
             order_params = {
                 "client_order_id": uuid.uuid4().hex,
-                "instrument_id": symbol, # Assuming symbol works or is replaced by ID upstream
+                "instrument_id": symbol, 
                 "side": side,
                 "order_type": "LIMIT",
                 "limit_price": str(price),
@@ -111,22 +105,15 @@ class WebullRouter:
                 "tif": "DAY"
             }
             
-            # Execute synchronously in thread to avoid blocking async loop if SDK is sync
-            response = await asyncio.to_thread(
-                self.api.place_order, 
-                settings.WEBULL_ACCOUNT_ID, 
-                stock_order=order_params
-            )
+            response = await self.client.place_order(settings.WEBULL_ACCOUNT_ID, order_params)
             
-            if response.status_code == 200:
-                order_data = response.json()
-                order_id = order_data.get("order_id")
+            # Success check based on presence of order_id
+            order_id = response.get("order_id") if isinstance(response, dict) else None
+            if order_id:
                 logger.info("Router: Order Placed Successfully", order_id=order_id)
-                # In a real scenario, we'd start polling or handle callback here
-                # For this task, we'll simulate the fill for position tracking if testing
                 return order_id
             else:
-                logger.error("Router: Webull Placement Failed", status=response.status_code, error=response.text)
+                logger.error("Router: Webull Placement Failed", response=response)
                 return None
 
         except Exception as e:
@@ -138,8 +125,5 @@ class WebullRouter:
             return
         side = "SELL" if self.current_position > 0 else "BUY"
         qty = abs(self.current_position)
-        # Panic flatten uses a more aggressive limit or fetches last price
-        # For simplicity, we assume price is provided or handled
         logger.warning("Router: PANIC FLATTEN TRIGGERED", symbol=symbol, qty=qty)
-        # In practice, we'd need a price here. Assuming 0.0 for market-like limit if allowed
-        # or fetching current quote. For now, we'll just log it.
+

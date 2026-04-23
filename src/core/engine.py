@@ -109,11 +109,11 @@ class ScheduledEngine:
 
 if __name__ == "__main__":
     # Scheduler initialization replaced main loop
-    from webullsdkcore.client import ApiClient
+    from src.execution.webull_client import WebullClient
     
     async def main():
-        # Placeholder for actual client initialization
-        client = ApiClient(settings.WEBULL_APP_KEY, settings.WEBULL_APP_SECRET)
+        # Initialize client
+        client = WebullClient(settings.WEBULL_APP_KEY, settings.WEBULL_APP_SECRET)
         engine = ScheduledEngine(client)
         engine.start()
         
@@ -122,5 +122,6 @@ if __name__ == "__main__":
                 await asyncio.sleep(1)
         except (KeyboardInterrupt, SystemExit):
             await engine.stop()
+            await client.close()
 
     asyncio.run(main())

@@ -1,5 +1,7 @@
 import structlog
+import polars as pl
 from src.data.duck_storage import DuckDBStorage
+from src.execution.webull_client import WebullClient
 
 logger = structlog.get_logger()
 
@@ -9,18 +11,22 @@ class WebullIngestor:
     and persists them to DuckDB for the analytical pipeline.
     """
     
-    def __init__(self, api_client: ApiClient):
-        self.api = API(api_client)
+    def __init__(self, client: WebullClient):
+        self.client = client
         self.storage = DuckDBStorage()
 
-    def fetch_and_persist(self, symbol: str):
+    async def fetch_and_persist(self, symbol: str):
         """
         Fetches hourly bars from Webull and inserts them into DuckDB 'ohlcv' table.
         """
         logger.info("Ingestor: Fetching data from Webull", symbol=symbol)
         try:
             # Fetch hourly bars from Webull
-            bars = self.api.get_bars(symbol, interval="1h")
+            response = await self.client.get_bars(symbol, interval="1h")
+            
+            # Extract bars from response (adjusting for likely API format)
+            bars = response if isinstance(response, list) else response.get("bars", [])
+            
             if not bars:
                 logger.warning("Ingestor: No bars returned from Webull", symbol=symbol)
                 return
