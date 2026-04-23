@@ -9,9 +9,8 @@ class Settings(BaseSettings):
     WEBULL_APP_SECRET: str = Field(default="", alias="WEBULL_APP_SECRET")
     WEBULL_ACCOUNT_ID: str = Field(default="", alias="WEBULL_ACCOUNT_ID")
 
-    # KDB+ Connectivity
-    KDB_HOST: str = Field(default="localhost", alias="KDB_HOST")
-    KDB_PORT: int = Field(default=5001, alias="KDB_PORT")
+    # DuckDB Connectivity
+    DUCKDB_PATH: str = Field(default="data/celestium.db", alias="DUCKDB_PATH")
 
     # Rithmic Connectivity (Legacy - To be removed)
     RITHMIC_USERNAME: str = Field(default="user", alias="RITHMIC_USERNAME")
