@@ -1,0 +1,3 @@
+- [ ] Task 5.1: Update AccountState Model
+- [ ] Task 5.2: Implement GFV Prevention in validate_trade
+- [ ] Task 5.3: Update update_session and process_eod_anchor for T+1 Logic

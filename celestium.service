@@ -1,0 +1,19 @@
+[Unit]
+Description=CelestiumQT Scheduled Trading Engine
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/celestium_qt
+Environment="PATH=/opt/celestium_qt/.venv/bin"
+# Inject production keys via environment file
+EnvironmentFile=/opt/celestium_qt/.env
+ExecStart=/opt/celestium_qt/.venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=celestium_qt
+
+[Install]
+WantedBy=multi-user.target

@@ -35,37 +35,28 @@ class Classifier:
         Predicts trade probability (Layer 2 Inference).
         Processes 15m bar history into features.
         """
-        if df.is_empty() or len(df) < 100:
+        if df.is_empty() or len(df) < 110: # Need extra for gradient/momentum shifts
             return 0.0
         
         try:
             # 1. Feature Engineering (Layer 1)
-            # ADX, ATR, Efficiency Ratio
+            # Now includes Hurst, Hurst Gradient, ADX, ATR, Efficiency Ratio, Vol-Adj Momentum
             df_feats = add_regime_features(df)
             
-            # 2. Hurst Exponent (Last 100 bars)
-            hurst = calculate_hurst_variance_ratio(df["close"].tail(100))
-            
-            # 3. Get the latest row for inference
+            # 2. Get the latest row for inference
             latest = df_feats.tail(1)
             
             # Construct feature vector matching training
-            # Features: ["hurst", "atr", "efficiency_ratio", "volatility", "adx"]
-            # Note: add_regime_features calculates volatility (as rolling_sum of abs diff)
+            # Features: ["hurst", "hurst_gradient", "atr", "efficiency_ratio", "volatility", "adx", "vol_adj_momentum"]
+            features = ["hurst", "hurst_gradient", "atr", "efficiency_ratio", "volatility", "adx", "vol_adj_momentum"]
             
-            feature_data = {
-                "hurst": hurst,
-                "atr": latest["atr"].item(),
-                "efficiency_ratio": latest["efficiency_ratio"].item(),
-                "volatility": latest["volatility"].item(),
-                "adx": latest["adx"].item()
-            }
+            feature_data = {f: latest[f].item() for f in features}
             
             if self.model is None:
                 logger.error("Classifier: Prediction FAILED. Model not loaded.")
                 return 0.0
             
-            # 4. Inference
+            # 3. Inference
             X = np.array([[v for v in feature_data.values()]])
             dmat = xgb.DMatrix(X, feature_names=list(feature_data.keys()))
             prob = self.model.predict(dmat)[0]

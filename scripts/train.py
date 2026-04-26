@@ -4,7 +4,7 @@ from sklearn.metrics import classification_report
 import numpy as np
 import os
 import structlog
-from src.features.regime import add_regime_features, calculate_hurst_variance_ratio
+from src.features.regime import add_regime_features
 from src.features.labels import apply_triple_barrier_labels
 
 logger = structlog.get_logger()
@@ -14,22 +14,31 @@ def prepare_data(raw_path: str) -> pl.DataFrame:
     logger.info("Preparing Data...", path=raw_path)
     df = pl.read_parquet(raw_path)
     
-    # 1. Add Regime Features (Layer 1)
-    df = add_regime_features(df)
+    # Extract symbol from filename
+    symbol = os.path.basename(raw_path).split("_")[0]
+    df = df.with_columns(pl.lit(symbol).alias("symbol"))
     
-    # 2. Add Hurst Exponent (Rolling)
-    # Note: For training, we can calculate rolling Hurst
+    # Normalize timestamp
     df = df.with_columns(
-        pl.col("close").rolling_map(
-            lambda s: calculate_hurst_variance_ratio(pl.Series(s)), 
-            window_size=100
-        ).alias("hurst")
+        pl.col("timestamp").dt.cast_time_unit("us").dt.replace_time_zone(None)
     )
     
-    # 3. Apply Triple Barrier Labels (Target)
-    df = apply_triple_barrier_labels(df, pt_sl=[1.5, 1.0], vertical_barrier=16)
+    # FILTER: Remove ghost prices (NQ should be between 10k and 30k in 2026)
+    df = df.filter(
+        (pl.col("close") > 10000) & (pl.col("close") < 30000)
+    )
     
-    # 4. Cleanup
+    # Sort by timestamp to ensure chronological order
+    df = df.sort("timestamp")
+    
+    # 1. Add Regime Features (Layer 1) - Per Symbol
+    df = add_regime_features(df)
+    
+    # 2. Apply Triple Barrier Labels (Target)
+    # Tighter barriers for real market noise: 1.0 ATR Target, 0.5 ATR Stop
+    df = apply_triple_barrier_labels(df, pt_sl=[1.0, 0.5], vertical_barrier=16)
+    
+    # 3. Cleanup
     df = df.drop_nulls()
     return df
 
@@ -38,9 +47,10 @@ def purged_walk_forward_cv(df: pl.DataFrame, window_size: int = 2000, gap: int =
     Purged Walk-Forward Cross-Validation.
     """
     total_len = len(df)
-    # Ensure we have enough data for at least one fold
     if total_len < (window_size * 2 + gap):
-        yield df.slice(0, int(total_len * 0.7)), df.slice(int(total_len * 0.7) + gap, int(total_len * 0.3) - gap)
+        # Fallback for small datasets (like our synthetic 3900 rows)
+        train_size = int(total_len * 0.7)
+        yield df.slice(0, train_size), df.slice(train_size + gap, total_len - (train_size + gap))
         return
 
     for i in range(window_size, total_len - window_size, window_size // 2):
@@ -52,7 +62,8 @@ def purged_walk_forward_cv(df: pl.DataFrame, window_size: int = 2000, gap: int =
 def train_alpha():
     """Main training loop for Layer 2 XGBoost."""
     raw_data_dir = "data/raw"
-    processed_data_path = "data/processed/training_data.parquet"
+    processed_data_dir = "data/processed"
+    processed_data_path = os.path.join(processed_data_dir, "training_data.parquet")
     
     # 1. Data Ingestion
     all_dfs = []
@@ -68,10 +79,11 @@ def train_alpha():
         return
 
     full_df = pl.concat(all_dfs)
+    os.makedirs(processed_data_dir, exist_ok=True)
     full_df.write_parquet(processed_data_path)
     
     # 2. Training
-    features = ["hurst", "atr", "efficiency_ratio", "volatility", "adx"]
+    features = ["hurst", "hurst_gradient", "atr", "efficiency_ratio", "volatility", "adx", "vol_adj_momentum"]
     target = "label"
     
     logger.info("Starting Walk-Forward Training", rows=len(full_df))

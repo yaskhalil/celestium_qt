@@ -3,7 +3,7 @@ import uuid
 import structlog
 from datetime import datetime, timezone
 from typing import Optional
-from src.execution.webull_client import WebullClient
+from webull.trade.trade_client import TradeClient
 from src.config import settings
 from src.core.oracle import AccountState
 
@@ -15,56 +15,40 @@ class WebullRouter:
     Enforces T+1 Settlement and Equity Limit Orders.
     """
     
-    def __init__(self, client: WebullClient, state: AccountState):
+    def __init__(self, client: TradeClient, state: AccountState):
         self.client = client
         self.state = state
         self.current_position = 0
         self.active_orders = {}
         self.min_hold_seconds = 30
 
-    async def _on_order_update(self, update: dict):
-        """Processes Webull order updates and maintains position state."""
-        status = update.get("status")
-        if status == "FILLED":
-            side = update.get("side")
-            qty = int(update.get("filled_quantity", 0))
-            
-            if side == "BUY":
-                if self.current_position == 0:
-                    self.state.current_entry_time = datetime.now(timezone.utc)
-                self.current_position += qty
-            elif side == "SELL":
-                if self.current_position == 0:
-                    self.state.current_entry_time = datetime.now(timezone.utc)
-                self.current_position -= qty
-            
-            if self.current_position == 0:
-                self.state.current_entry_time = None
-            
-            self.state.save()
-            logger.info("Router: Position Updated", position=self.current_position)
-
     async def _verify_position(self, symbol: str):
         """Fetches the actual position from Webull to prevent ghost positions."""
         try:
-            response = await self.client.get_positions(settings.WEBULL_ACCOUNT_ID)
+            # SDK calls are synchronous, run in thread
+            res = await asyncio.to_thread(
+                self.client.account_v2.get_account_position,
+                settings.WEBULL_ACCOUNT_ID
+            )
             
-            # Assuming the response format gives a list of positions
-            positions = response if isinstance(response, list) else response.get("positions", [])
-            symbol_position = next((p for p in positions if p.get("symbol") == symbol or p.get("ticker", {}).get("symbol") == symbol), None)
-            
-            if symbol_position:
-                qty = int(float(symbol_position.get("position", 0)))
-                self.current_position = qty
-                logger.info("Router: Position Verified", symbol=symbol, position=self.current_position)
+            if res.status_code == 200:
+                positions = res.json().get("positions", [])
+                symbol_position = next((p for p in positions if p.get("symbol") == symbol), None)
+                
+                if symbol_position:
+                    qty = float(symbol_position.get("position", 0))
+                    self.current_position = qty
+                    logger.info("Router: Position Verified", symbol=symbol, position=self.current_position)
+                else:
+                    self.current_position = 0
+                    logger.info("Router: Position Verified (None)", symbol=symbol)
             else:
-                self.current_position = 0
-                logger.info("Router: Position Verified (None)", symbol=symbol)
+                logger.error("Router: Position Fetch Failed", status=res.status_code, error=res.text)
                 
         except Exception as e:
-            logger.error("Router: Position Verification Failed", error=str(e))
+            logger.error("Router: Position Verification Error", error=str(e))
 
-    async def execute_trade(self, symbol: str, quantity: int, side: str, price: Optional[float] = None):
+    async def execute_trade(self, symbol: str, quantity: float, side: str, price: Optional[float] = None):
         """Places orders with Compliance Guards via Webull TPA."""
         
         # 0. Harden: Verify actual position before proceeding
@@ -84,36 +68,50 @@ class WebullRouter:
                 logger.warning("Router: EXIT DELAYED for 30s Compliance", elapsed=round(elapsed, 1), delay=round(delay, 1))
                 await asyncio.sleep(delay)
 
-        # 3. Calculate Limit Price (Mandatory for Webull $400 account)
+        # 3. Calculate Limit Price
         if price is None:
-            logger.error("Router: Limit price calculation failed or missing. Blocking order.")
+            logger.error("Router: Limit price missing. Blocking order.")
             return None
         
-        # Round to 2 decimal places for equities
         price = round(price, 2)
+        quantity = round(float(quantity), 2)
+
+        if settings.SHADOW_MODE:
+            logger.info("Router: SHADOW MODE - Order would be placed", 
+                        symbol=symbol, side=side, qty=quantity, price=price)
+            return "shadow_order_id"
 
         logger.info("Router: EXECUTING LIMIT ORDER", symbol=symbol, side=side, qty=quantity, price=price)
         
         try:
+            # Construct order as per SDK v2 requirements
             order_params = {
-                "client_order_id": uuid.uuid4().hex,
-                "instrument_id": symbol, 
-                "side": side,
-                "order_type": "LIMIT",
-                "limit_price": str(price),
-                "qty": str(quantity),
-                "tif": "DAY"
+                "account_id": settings.WEBULL_ACCOUNT_ID,
+                "client_combo_order_id": uuid.uuid4().hex,
+                "new_orders": [{
+                    "client_order_id": uuid.uuid4().hex,
+                    "instrument_type": "EQUITY",
+                    "symbol": symbol,
+                    "market": "US",
+                    "side": side,
+                    "order_type": "LIMIT",
+                    "limit_price": str(price),
+                    "quantity": str(quantity),
+                    "support_trading_session": "CORE",
+                    "entrust_type": "QTY",
+                    "time_in_force": "DAY"
+                }]
             }
             
-            response = await self.client.place_order(settings.WEBULL_ACCOUNT_ID, order_params)
+            res = await asyncio.to_thread(self.client.order_v2.place_order, **order_params)
             
-            # Success check based on presence of order_id
-            order_id = response.get("order_id") if isinstance(response, dict) else None
-            if order_id:
+            if res.status_code == 200:
+                data = res.json()
+                order_id = data.get("order_id")
                 logger.info("Router: Order Placed Successfully", order_id=order_id)
                 return order_id
             else:
-                logger.error("Router: Webull Placement Failed", response=response)
+                logger.error("Router: Webull Placement Failed", status=res.status_code, error=res.text)
                 return None
 
         except Exception as e:

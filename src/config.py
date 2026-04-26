@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     MAX_POSITION_SIZE_MINI: int = 7
     MAX_POSITION_SIZE_MICRO: int = 70
     CONSISTENCY_THRESHOLD: float = 0.40 # 40% Rule
+    MAX_DAILY_TRADES: int = 50
+    QUALIFYING_THRESHOLD: float = 100.0
+    HURST_THRESHOLD: float = 0.42
     
     # Strategy Parameters
     SHADOW_MODE: bool = Field(default=True, alias="SHADOW_MODE")

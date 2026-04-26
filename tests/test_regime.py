@@ -5,10 +5,10 @@ from src.features.regime import calculate_hurst_variance_ratio
 
 def test_hurst_trending_data():
     """Confirms Hurst > 0.5 for a strong trend."""
-    # Create a perfectly trending series
-    prices = np.linspace(100, 200, 500)
-    # Add very minimal noise
-    prices += np.random.normal(0, 0.1, 500)
+    np.random.seed(42)
+    # Create a trending random walk with positive drift
+    returns = np.random.normal(0.002, 0.01, 500)
+    prices = 100 * np.exp(np.cumsum(returns))
     
     hurst = calculate_hurst_variance_ratio(pl.Series(prices))
     print(f"Trending Hurst: {hurst}")

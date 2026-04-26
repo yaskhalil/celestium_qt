@@ -25,20 +25,20 @@ class DailySession(BaseModel):
 class AccountState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
-    balance: float = 50000.0
-    equity: float = 50000.0
+    balance: float = Field(default_factory=lambda: settings.STARTING_BALANCE)
+    equity: float = Field(default_factory=lambda: settings.STARTING_BALANCE)
     settled_cash: float = 0.0
     unsettled_cash: float = 0.0
-    safety_net_floor: float = 47500.0
-    daily_loss_limit: float = 1100.0
-    soft_kill_switch: float = 1050.0
-    reserve_threshold: float = 2600.0
-    daily_profit_ceiling: float = 1200.0
+    safety_net_floor: float = Field(default_factory=lambda: settings.BALANCE_FLOOR)
+    daily_loss_limit: float = Field(default_factory=lambda: settings.DAILY_LOSS_LIMIT)
+    soft_kill_switch: float = Field(default_factory=lambda: settings.SOFT_KILL_SWITCH)
+    reserve_threshold: float = Field(default_factory=lambda: settings.SAFETY_THRESHOLD_RESERVE)
+    daily_profit_ceiling: float = Field(default_factory=lambda: settings.DAILY_PROFIT_CEILING)
     
     current_daily_pnl: float = 0.0
     current_daily_trades: int = 0
-    max_daily_trades: int = 50
-    hurst_threshold: float = 0.42
+    max_daily_trades: int = Field(default_factory=lambda: settings.MAX_DAILY_TRADES)
+    hurst_threshold: float = Field(default_factory=lambda: settings.HURST_THRESHOLD)
     current_entry_time: Optional[datetime] = None
     
     total_profit_since_payout: float = 0.0
@@ -55,7 +55,7 @@ class AccountState(BaseModel):
 
     @property
     def liquid_payout_capital(self) -> float:
-        return max(0.0, self.equity - (50000.0 + self.reserve_threshold))
+        return max(0.0, self.equity - (settings.STARTING_BALANCE + self.reserve_threshold))
 
     def is_trading_allowed(self, current_time: Optional[time] = None) -> bool:
         # Note: Bulenox times are ET, Rithmic uses UTC. 
@@ -90,7 +90,7 @@ class Oracle:
     def __init__(self, state: AccountState):
         self.state = state
 
-    def validate_trade(self, quantity: int, price: float, side: str, 
+    def validate_trade(self, quantity: float, price: float, side: str, 
                        current_hurst: float = 0.0, 
                        current_time: Optional[time] = None) -> bool:
         """Enforces Hardened Evaluator Rules: DLL, Daily Cap, Trade Cap, Hurst."""
@@ -137,9 +137,8 @@ class Oracle:
 
     def process_eod_anchor(self):
         """Finalizes daily session and handles T+1 cash settlement."""
-        new_potential_floor = self.state.balance - 2500.0
-        if new_potential_floor > self.state.safety_net_floor:
-            self.state.safety_net_floor = min(new_potential_floor, 50100.0)
+        # For Equity Cash Accounts, we don't have a trailing drawdown floor like Bulenox.
+        # The floor remains static or increases only if manually adjusted in settings.
         
         # T+1 Settlement: Unsettled cash from today becomes settled for tomorrow
         self.state.settled_cash += self.state.unsettled_cash
@@ -164,19 +163,28 @@ class Oracle:
             
         self.state.save()
 
-    def update_session(self, amount: float, quantity: int = 0, side: str = "BUY"):
+    def update_session(self, pnl: float = 0.0, cash_flow: float = 0.0, quantity: float = 0.0, side: str = "BUY"):
         """Updates intraday balance and manages T+1 cash pools."""
         commissions = quantity * settings.COMMISSION_PER_LOT
-        
+
+        # 1. Update Daily PnL (Closed trades only for SELL side usually)
+        self.state.current_daily_pnl += pnl
+
+        # 2. Update Cash Pools
         if side == "BUY":
-            # cost is positive, reduction in balance
-            self.state.settled_cash -= (amount + commissions)
+            # cash_flow is the cost (positive value)
+            self.state.settled_cash -= (cash_flow + commissions)
         elif side == "SELL":
-            # amount is proceeds, added to unsettled
-            self.state.unsettled_cash += (amount - commissions)
-        
-        # Sync balance to the sum of cash pools
+            # cash_flow is the proceeds (positive value)
+            self.state.unsettled_cash += (cash_flow - commissions)
+
+        # 3. Sync Balance
         self.state.balance = self.state.settled_cash + self.state.unsettled_cash
         self.state.equity = self.state.balance
         self.state.current_daily_trades += 1
+
+        # Check DLL directly upon update
+        if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
+            self.state.status = AccountStatus.PAUSED_DAILY_LOSS
+
         self.state.save()

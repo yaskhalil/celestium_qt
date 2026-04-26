@@ -43,3 +43,17 @@ models/*.ubj
 
 # UV
 uv.lock
+
+# Logs
+*.log
+webull_trade_sdk.log*
+
+# Local Database and Data
+data/*.db
+data/*.json
+data/reports/*.md
+
+# Misc
+.Rhistory
+.python-version
+conf/

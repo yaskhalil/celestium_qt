@@ -2,38 +2,57 @@ import polars as pl
 import numpy as np
 from scipy import stats
 
-def calculate_hurst_variance_ratio(prices: pl.Series, lags: list = [2, 5, 10, 20]) -> float:
+def calculate_hurst_variance_ratio(prices: pl.Series) -> float:
     """
-    Calculates the Hurst Exponent using the Variance Ratio (VR) method.
-    Optimized for live speed in CelestiumQT.
-    H = 1/2 * (1 + VR_test_slope)
+    Calculates the Hurst Exponent using the R/S method.
+    Optimized for 1m bars in CelestiumQT.
     """
-    if len(prices) < max(lags) * 2:
-        return 0.5 # Random walk default
+    if len(prices) < 100:
+        return 0.5
         
     prices_np = prices.to_numpy()
-    log_prices = np.log(prices_np)
-    variances = []
+    # 1. Calculate returns
+    returns = np.diff(np.log(prices_np))
     
-    # 1. Calculate variance of k-period returns
-    base_var = np.var(np.diff(log_prices))
-    
-    for k in lags:
-        # k-period returns: log(P_t) - log(P_{t-k})
-        k_returns = log_prices[k:] - log_prices[:-k]
-        k_var = np.var(k_returns)
-        # Variance Ratio: Var(k-ret) / (k * Var(1-ret))
-        vr = k_var / (k * base_var)
-        variances.append(vr)
+    def get_rs(data):
+        # Mean centered
+        z = data - np.mean(data)
+        # Cumulative sum of deviations
+        y = np.cumsum(z)
+        # Range
+        r = np.max(y) - np.min(y)
+        # Standard deviation
+        s = np.std(data)
+        if s == 0: return 0
+        return r / s
+
+    # 2. Calculate R/S for different sub-window sizes
+    # We'll use 10, 20, 50, 100
+    lags = [10, 25, 50, 99]
+    rs_values = []
+    for lag in lags:
+        # Average RS over non-overlapping windows
+        num_windows = len(returns) // lag
+        if num_windows == 0: continue
         
-    # 2. Linear regression: log(VR) vs log(k)
-    log_k = np.log(lags)
-    log_vark = np.log([np.var(log_prices[k:] - log_prices[:-k]) for k in lags])
+        rss = []
+        for i in range(num_windows):
+            chunk = returns[i*lag : (i+1)*lag]
+            res = get_rs(chunk)
+            if res > 0: rss.append(res)
+            
+        if rss:
+            rs_values.append(np.mean(rss))
+        else:
+            rs_values.append(1.0) # Fallback
+
+    if len(rs_values) < 2:
+        return 0.5
+
+    # 3. Regression: log(R/S) = H * log(n)
+    slope, _, _, _, _ = stats.linregress(np.log(lags), np.log(rs_values))
     
-    slope, _, _, _, _ = stats.linregress(log_k, log_vark)
-    hurst = slope / 2.0
-    
-    return float(np.clip(hurst, 0.0, 1.0))
+    return float(np.clip(slope, 0.0, 1.0))
 
 def add_adx(df: pl.DataFrame, window: int = 14) -> pl.DataFrame:
     """
@@ -89,7 +108,7 @@ def add_adx(df: pl.DataFrame, window: int = 14) -> pl.DataFrame:
 def add_regime_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     Adds statistical context features (Layer 1).
-    Calculates Hurst, ADX, ATR, and Efficiency Ratio.
+    Calculates Hurst, Hurst Gradient, ADX, ATR, Efficiency Ratio, and Vol-Adj Momentum.
     """
     if df.is_empty():
         return df
@@ -120,6 +139,23 @@ def add_regime_features(df: pl.DataFrame) -> pl.DataFrame:
     
     df = df.with_columns(
         (pl.col("net_change") / pl.col("volatility")).alias("efficiency_ratio")
+    )
+
+    # 4. Hurst and Hurst Gradient (Rolling 100)
+    df = df.with_columns(
+        pl.col("close").rolling_map(
+            lambda s: calculate_hurst_variance_ratio(pl.Series(s)), 
+            window_size=100
+        ).alias("hurst")
+    )
+    
+    df = df.with_columns(
+        (pl.col("hurst") - pl.col("hurst").shift(5)).alias("hurst_gradient")
+    )
+
+    # 5. Volatility-Adjusted Momentum (10-period)
+    df = df.with_columns(
+        ((pl.col("close") - pl.col("close").shift(10)) / pl.col("atr")).alias("vol_adj_momentum")
     )
     
     return df

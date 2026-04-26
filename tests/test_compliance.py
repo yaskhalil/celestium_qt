@@ -28,18 +28,12 @@ async def test_30s_hold_time_enforcement():
     router = WebullRouter(mock_client, state)
     
     # 1. Enter Trade
-    # Mock order update to simulate fill
-    class MockUpdate:
-        def __init__(self, qty, side):
-            self.status = "FILLED"
-            self.fill_quantity = qty
-            self.side = side
-            self.order_id = "123"
-            
-    # Simulate entry
-    await router._on_order_update(MockUpdate(2, "BUY"))
-    assert router.current_position == 2
-    # assert router.entry_time is not None # Changed to state.current_entry_time in implementation
+    # Simulate being in a trade
+    router.current_position = 2
+    state.current_entry_time = datetime.now(timezone.utc)
+    
+    # Mock verify_position to not overwrite current_position
+    router._verify_position = AsyncMock()
     
     # 2. Attempt Immediate Exit (should delay)
     start_time = datetime.now(timezone.utc)
