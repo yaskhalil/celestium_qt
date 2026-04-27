@@ -15,21 +15,39 @@ async def fetch_splg():
     
     class BatchBarsRequest(ApiRequest):
         def __init__(self, symbol: str):
-            super().__init__("/openapi/market-data/stock/batch-bars", version='v2', method="GET")
-            self.add_query_param("symbols", symbol)
-            self.add_query_param("timespan", "1m")
-            self.add_query_param("count", "1000") # Max allowed usually
-            self.add_query_param("category", "STOCK")
+            super().__init__("/openapi/market-data/stock/batch-bars", version='v2', method="POST", body_params={})
+            self.add_body_params("symbols", [symbol])
+            self.add_body_params("timespan", "M60") # Hourly
+            self.add_body_params("count", 1000)
+            self.add_body_params("category", "US_STOCK")
 
     req = BatchBarsRequest("SPLG")
     try:
         res = await asyncio.to_thread(api_client.get_response, req)
         if res.status_code == 200:
             data = res.json()
-            bars = data.get("bars", [])
+            bars = []
+            if isinstance(data, dict):
+                if "bars" in data:
+                    bars = data["bars"]
+                elif "data" in data:
+                    for item in data["data"]:
+                        if item.get("symbol") == "SPLG":
+                            bars = item.get("bars", [])
+                            break
+            
             print(f"Fetched {len(bars)} bars")
             if bars:
                 df = pl.from_dicts(bars)
+                # Map columns
+                rename_map = {"t": "timestamp", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+                rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
+                if rename_map:
+                    df = df.rename(rename_map)
+                
+                if "timestamp" in df.columns and df["timestamp"].dtype in [pl.Int64, pl.Float64]:
+                    df = df.with_columns(pl.from_epoch(pl.col("timestamp"), time_unit="ms"))
+                
                 df.write_parquet("data/raw/SPLG_historical.parquet")
                 print("Saved to data/raw/SPLG_historical.parquet")
         else:
