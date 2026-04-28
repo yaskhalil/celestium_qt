@@ -14,11 +14,11 @@ dependencies = [
     "torch",
     "pydantic-settings>=2.13.1",
     "duckdb",
-    "webull-openapi-python-sdk",
     "apscheduler",
     "scikit-learn>=1.8.0",
     "httpx>=0.28.1",
     "pyarrow>=24.0.0",
+    "databento>=0.76.0",
 ]
 
 [dependency-groups]

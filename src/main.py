@@ -1,6 +1,6 @@
 import asyncio
 import structlog
-from webull.core.client import ApiClient
+from src.execution.webull_client import WebullClient
 from src.core.engine import ScheduledEngine
 from src.core.oracle import AccountState
 from src.config import settings
@@ -13,22 +13,18 @@ async def main():
     """Async entry point (The Event Loop)"""
     logger.info("Initializing CelestiumQT (Webull Mode)")
     
-    # 1. Initialize Webull Client
-    api_client = ApiClient(settings.WEBULL_APP_KEY, settings.WEBULL_APP_SECRET, "us")
-    
-    # Check if UAT is explicitly requested
-    is_uat = False 
-    if is_uat:
-        logger.info("Engine: Running in UAT Environment")
-        api_client.add_endpoint("us", "us-openapi-alb.uat.webullbroker.com")
-    else:
-        logger.warning("Engine: RUNNING IN PRODUCTION ENVIRONMENT (SHADOW MODE ACTIVE)")
+    # 1. Initialize native WebullClient
+    webull_client = WebullClient(
+        app_key=settings.WEBULL_APP_KEY,
+        app_secret=settings.WEBULL_APP_SECRET,
+        access_token=settings.WEBULL_ACCESS_TOKEN
+    )
     
     # 2. Load Persistent Account State
     state = AccountState.load()
     
     # 3. Initialize the scheduled engine
-    engine = ScheduledEngine(api_client, state)
+    engine = ScheduledEngine(webull_client, state)
     engine.start()
     
     # Start the event loop
@@ -43,6 +39,7 @@ async def main():
         # Stop scheduler and save state
         await engine.stop()
         state.save()
+        await webull_client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

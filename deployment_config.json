@@ -12,7 +12,7 @@
     "pt_multiplier": 1.5,
     "sl_multiplier": 0.75,
     "shadow_mode": true,
-    "symbol": "SPLG",
+    "symbol": "AAPL",
     "exchange": "NASD",
     "hurst_threshold": 0.45,
     "max_daily_trades": 10,

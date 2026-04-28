@@ -3,6 +3,7 @@ import os
 import polars as pl
 from webull.core.client import ApiClient
 from webull.core.request import ApiRequest
+from webull.data.common.category import Category
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,18 +11,21 @@ load_dotenv()
 async def fetch_splg():
     app_key = os.getenv("WEBULL_APP_KEY")
     app_secret = os.getenv("WEBULL_APP_SECRET")
-    
+    token = os.getenv("WEBULL_ACCESS_TOKEN")
+
     api_client = ApiClient(app_key, app_secret, "us")
-    
+    if token:
+        api_client.set_token(token)
+
     class BatchBarsRequest(ApiRequest):
         def __init__(self, symbol: str):
             super().__init__("/openapi/market-data/stock/batch-bars", version='v2', method="POST", body_params={})
             self.add_body_params("symbols", [symbol])
             self.add_body_params("timespan", "M60") # Hourly
-            self.add_body_params("count", 1000)
-            self.add_body_params("category", "US_STOCK")
+            self.add_body_params("count", 100)
+            self.add_body_params("category", Category.US_STOCK.name)
 
-    req = BatchBarsRequest("SPLG")
+    req = BatchBarsRequest("AAPL")
     try:
         res = await asyncio.to_thread(api_client.get_response, req)
         if res.status_code == 200:
@@ -48,8 +52,9 @@ async def fetch_splg():
                 if "timestamp" in df.columns and df["timestamp"].dtype in [pl.Int64, pl.Float64]:
                     df = df.with_columns(pl.from_epoch(pl.col("timestamp"), time_unit="ms"))
                 
-                df.write_parquet("data/raw/SPLG_historical.parquet")
-                print("Saved to data/raw/SPLG_historical.parquet")
+                output_path = "data/raw/SPLG_historical.parquet"
+                df.write_parquet(output_path)
+                print(f"Saved to {output_path}")
         else:
             print(f"Failed: {res.status_code} {res.text}")
     except Exception as e:

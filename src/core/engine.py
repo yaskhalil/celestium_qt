@@ -1,6 +1,5 @@
 import structlog
 from typing import Optional
-from webull.core.client import ApiClient
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import asyncio
@@ -13,9 +12,9 @@ from src.execution.router import WebullRouter
 from src.models.classifier import Classifier
 from src.core.allocator import Allocator
 from src.core.advisor import Advisor
-from webull.trade.trade_client import TradeClient
 
-from src.data.ingestion import WebullIngestor
+from src.data.ingestion import DatabentoIngestor
+from src.execution.webull_client import WebullClient
 
 logger = structlog.get_logger()
 
@@ -26,7 +25,7 @@ class ScheduledEngine:
     Signal (5m): Heavy model inference and entries.
     """
 
-    def __init__(self, api_client: ApiClient, account_state: Optional[AccountState] = None):
+    def __init__(self, webull_client: WebullClient, account_state: Optional[AccountState] = None):
         self.account_state = account_state or AccountState.load()
         self.buffer = DuckDBBuffer()
         self.bn = BooleanStateSpace()
@@ -34,9 +33,8 @@ class ScheduledEngine:
         self.allocator = Allocator()
         self.classifier = Classifier()
         
-        trade_client = TradeClient(api_client)
-        self.router = WebullRouter(trade_client, self.account_state)
-        self.ingestor = WebullIngestor(api_client)
+        self.router = WebullRouter(webull_client, self.account_state)
+        self.ingestor = DatabentoIngestor(api_key=settings.DATABENTO_API_KEY)
         self.advisor = Advisor()
         
         self.scheduler = AsyncIOScheduler()
@@ -182,16 +180,17 @@ class ScheduledEngine:
 
 if __name__ == "__main__":
     # Scheduler initialization replaced main loop
-    from webull.core.client import ApiClient
+    from src.execution.webull_client import WebullClient
     
     async def main():
-        # Initialize client
-        api_client = ApiClient(settings.WEBULL_APP_KEY, settings.WEBULL_APP_SECRET, "us")
+        # Initialize native WebullClient
+        webull_client = WebullClient(
+            app_key=settings.WEBULL_APP_KEY,
+            app_secret=settings.WEBULL_APP_SECRET,
+            access_token=settings.WEBULL_ACCESS_TOKEN
+        )
         
-        # User requested UAT endpoint for testing
-        api_client.add_endpoint("us", "us-openapi-alb.uat.webullbroker.com")
-        
-        engine = ScheduledEngine(api_client)
+        engine = ScheduledEngine(webull_client)
         engine.start()
         
         try:

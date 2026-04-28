@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # Webull Connectivity
     WEBULL_APP_KEY: str = Field(default="", alias="WEBULL_APP_KEY")
     WEBULL_APP_SECRET: str = Field(default="", alias="WEBULL_APP_SECRET")
+    WEBULL_ACCESS_TOKEN: str = Field(default="", alias="WEBULL_ACCESS_TOKEN")
     WEBULL_ACCOUNT_ID: str = Field(default="", alias="WEBULL_ACCOUNT_ID")
 
     # DuckDB Connectivity
