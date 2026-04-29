@@ -11,7 +11,7 @@ logger = structlog.get_logger()
 
 async def main():
     """Async entry point (The Event Loop)"""
-    logger.info("Initializing CelestiumQT (Webull Mode)")
+    logger.info("Initializing CelestiumQT (Hybrid Mode: Databento + Webull)")
     
     # 1. Initialize native WebullClient
     webull_client = WebullClient(
