@@ -26,12 +26,14 @@ wheels/
 venv/
 ENV/
 
-# Data and Models (Usually ignored if large/dynamic)
+# Data (Usually ignored if large/dynamic)
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-models/*.ubj
+
+# Models
+# (Removed models/*.ubj to allow small XGBoost weights to be versioned)
 
 # Configuration
 .env
