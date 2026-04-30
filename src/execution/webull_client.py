@@ -22,6 +22,7 @@ class WebullClient:
 
     def _generate_signature(
         self, 
+        method: str,
         uri: str, 
         params: Dict[str, Any], 
         timestamp: str, 
@@ -29,37 +30,30 @@ class WebullClient:
         host: str,
         body: Optional[str] = None
     ) -> str:
-        sign_params = {
+        # Step 1: Query Params string (sorted)
+        sorted_query = "&".join([f"{k}={v}" for k, v in sorted(params.items())])
+        
+        # Step 2: Specific Headers string (sorted)
+        sign_headers = {
             "x-app-key": self.app_key,
             "x-timestamp": timestamp,
+            "x-signature-nonce": nonce,
             "x-signature-version": "1.0",
             "x-signature-algorithm": "HMAC-SHA1",
-            "x-signature-nonce": nonce,
             "host": host
         }
-        for k, v in params.items():
-            k_lower = k.lower()
-            if k_lower in sign_params:
-                sign_params[k_lower] = f"{sign_params[k_lower]}&{v}"
-            else:
-                sign_params[k_lower] = str(v)
+        sorted_headers = "&".join([f"{k}={v}" for k, v in sorted(sign_headers.items())])
         
-        sorted_keys = sorted(sign_params.keys())
-        sorted_array = [f"{k}={sign_params[k]}" for k in sorted_keys]
+        # Step 3: Body string
+        body_str = body if body else ""
         
-        string_to_sign = uri
-        if string_to_sign:
-            string_to_sign += "&" + "&".join(sorted_array)
-        else:
-            string_to_sign = "&".join(sorted_array)
-            
-        if body:
-            body_md5 = hashlib.md5(body.encode("utf-8")).hexdigest().upper()
-            string_to_sign += "&" + body_md5
-            
-        encoded_string = quote(string_to_sign, safe='')
+        # Step 4: Canonical string
+        # Format: METHOD|URI|QUERY_PARAMS|HEADERS|BODY
+        source_param = f"{method.upper()}|{uri}|{sorted_query}|{sorted_headers}|{body_str}"
+        
+        # Step 5: Sign
         key = (self.app_secret + "&").encode("utf-8")
-        signature = hmac.new(key, encoded_string.encode("utf-8"), hashlib.sha1).digest()
+        signature = hmac.new(key, source_param.encode("utf-8"), hashlib.sha1).digest()
         return base64.b64encode(signature).decode("utf-8")
 
     async def request(
@@ -80,10 +74,17 @@ class WebullClient:
         
         body_str = json.dumps(body, separators=(',', ':')) if body is not None else None
         
-        signature = self._generate_signature(uri=uri, params=params, timestamp=timestamp, nonce=nonce, host=host, body=body_str)
+        signature = self._generate_signature(
+            method=method,
+            uri=uri, 
+            params=params, 
+            timestamp=timestamp, 
+            nonce=nonce, 
+            host=host, 
+            body=body_str
+        )
         
         headers = {
-            "Host": host,
             "x-app-key": self.app_key,
             "x-timestamp": timestamp,
             "x-signature-nonce": nonce,
@@ -98,11 +99,26 @@ class WebullClient:
             headers["x-access-token"] = self.access_token
         
         url = target_base + uri
-        response = await self.client.request(method=method, url=url, params=params, content=body_str, headers=headers)
-        if response.status_code != 200:
-            print(f"Request Failed: {response.status_code} {response.text} URL: {url} Version: {version}")
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = await self.client.request(
+                method=method, 
+                url=url, 
+                params=params, 
+                content=body_str, 
+                headers=headers,
+                timeout=10.0
+            )
+            if response.status_code != 200:
+                print(f"Request Failed: {response.status_code} {response.text} URL: {url} Version: {version}")
+                response.raise_for_status()
+            return response.json()
+        except httpx.HTTPError as e:
+            # More descriptive logging for HTTP errors
+            print(f"Webull API HTTP Error: {e} for {method} {url}")
+            raise
+        except Exception as e:
+            print(f"Webull API Unexpected Error: {e} type={type(e)} for {method} {url}")
+            raise
 
     async def subscribe_quotes(self, symbols: list[str], category: str = "US_STOCK"):
         """Subscribes to market data (required for some symbols to return data in snapshots)."""
