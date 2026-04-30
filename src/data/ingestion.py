@@ -14,11 +14,12 @@ class DatabentoIngestor:
         self.storage = DuckDBStorage()
 
     async def fetch_and_persist(self, symbol: str, lookback_minutes: int = 60):
-        logger.info("Ingestor: Fetching data from Databento", symbol=symbol)
+        logger.info("Ingestor: Fetching historical data from Databento", symbol=symbol)
         try:
             client = db.Historical(self.api_key)
-            # Use a 15-minute safety lag for historical data availability
-            end = datetime.now(timezone.utc) - timedelta(minutes=15)
+            # Use a 30-minute safety lag to ensure historical availability 
+            # and avoid licensing issues with very recent intraday data.
+            end = datetime.now(timezone.utc) - timedelta(minutes=30)
             start = end - timedelta(minutes=lookback_minutes)
             
             # Continuous Futures use 'parent', Stocks use 'raw_symbol'
