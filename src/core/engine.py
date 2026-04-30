@@ -27,6 +27,7 @@ class ScheduledEngine:
 
     def __init__(self, webull_client: WebullClient, account_state: Optional[AccountState] = None):
         self.account_state = account_state or AccountState.load()
+        self.webull_client = webull_client
         self.buffer = DuckDBBuffer()
         self.bn = BooleanStateSpace()
         self.oracle = Oracle(self.account_state)
@@ -50,30 +51,43 @@ class ScheduledEngine:
     async def tick_monitor(self):
         """Fast tick: Triggered every minute to monitor and exit positions."""
         symbol = self.current_symbol
+        current_price = None
         
         # 0. Ingest latest data (Required for exit price check)
         try:
             await self.ingestor.fetch_and_persist(symbol)
             context = self.buffer.get_context(symbol, window=5)
-            if context.is_empty(): return
+            if not context.is_empty():
+                last_bar = context.tail(1).to_dicts()[0]
+                current_price = last_bar["close"]
+        except Exception as e:
+            logger.error("Engine: Ingestion failed, attempting Webull fallback", error=str(e))
+
+        # Fallback to Webull for real-time price monitoring if ingestion failed or was empty
+        if current_price is None:
+            logger.info("Engine: Fetching real-time price from Webull", symbol=symbol)
+            current_price = await self.webull_client.get_last_price(symbol)
             
-            last_bar = context.tail(1).to_dicts()[0]
-            current_price = last_bar["close"]
-            
+        if current_price is None:
+            logger.error("Engine: Could not obtain current price for monitoring", symbol=symbol)
+            return
+
+        try:
             # Position Management (Exits)
             await self.router._verify_position(symbol)
             if self.router.current_position != 0:
-                if last_bar["low"] <= self.stop_loss:
+                # Use current_price for monitoring logic
+                if current_price <= self.stop_loss:
                     logger.warning("Engine: STOP LOSS HIT", price=self.stop_loss, current=current_price)
-                    await self.router.execute_trade(symbol, abs(self.router.current_position), "SELL", price=self.stop_loss)
-                    self.oracle.update_session(pnl=(self.stop_loss - self.entry_price) * self.router.current_position, 
-                                               cash_flow=abs(self.router.current_position) * self.stop_loss,
+                    await self.router.execute_trade(symbol, abs(self.router.current_position), "SELL", price=current_price)
+                    self.oracle.update_session(pnl=(current_price - self.entry_price) * self.router.current_position, 
+                                               cash_flow=abs(self.router.current_position) * current_price,
                                                quantity=abs(self.router.current_position), side="SELL")
-                elif last_bar["high"] >= self.take_profit:
+                elif current_price >= self.take_profit:
                     logger.info("Engine: TAKE PROFIT HIT", price=self.take_profit, current=current_price)
-                    await self.router.execute_trade(symbol, abs(self.router.current_position), "SELL", price=self.take_profit)
-                    self.oracle.update_session(pnl=(self.take_profit - self.entry_price) * self.router.current_position,
-                                               cash_flow=abs(self.router.current_position) * self.take_profit,
+                    await self.router.execute_trade(symbol, abs(self.router.current_position), "SELL", price=current_price)
+                    self.oracle.update_session(pnl=(current_price - self.entry_price) * self.router.current_position,
+                                               cash_flow=abs(self.router.current_position) * current_price,
                                                quantity=abs(self.router.current_position), side="SELL")
         except Exception as e:
             logger.error("Engine: Monitor tick failed", error=str(e))

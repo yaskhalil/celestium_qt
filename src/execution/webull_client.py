@@ -104,5 +104,18 @@ class WebullClient:
     async def get_account_list(self) -> Dict[str, Any]:
         return await self.request("GET", "/openapi/account/list")
 
+    async def get_last_price(self, symbol: str) -> Optional[float]:
+        """Fetches the latest price for a symbol from Webull."""
+        try:
+            # Using the snapshot endpoint which usually doesn't require complex subscriptions for basic info
+            res = await self.request("GET", "/openapi/market/snapshot", params={"symbols": symbol, "category": "US_STOCK"})
+            snapshots = res.get("data", [])
+            if snapshots:
+                return float(snapshots[0].get("last_price", 0))
+            return None
+        except Exception as e:
+            print(f"Failed to fetch price from Webull: {e}")
+            return None
+
     async def close(self):
         await self.client.aclose()
