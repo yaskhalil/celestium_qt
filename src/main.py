@@ -9,8 +9,18 @@ from src.config import settings
 structlog.configure()
 logger = structlog.get_logger()
 
+def verify_timezone():
+    """Verify that the required timezone data is available."""
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo("America/New_York")
+    except Exception:
+        logger.error("Timezone data missing. Please install 'tzdata' package: pip install tzdata")
+        raise RuntimeError("Missing timezone data for America/New_York")
+
 async def main():
     """Async entry point (The Event Loop)"""
+    verify_timezone()
     logger.info("Initializing CelestiumQT (Hybrid Mode: Databento + Webull)")
     
     # 1. Initialize native WebullClient

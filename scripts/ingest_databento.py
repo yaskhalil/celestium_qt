@@ -2,7 +2,7 @@ import databento as db
 import polars as pl
 import os
 import structlog
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from src.config import settings
 
 logger = structlog.get_logger()
@@ -19,7 +19,7 @@ def ingest_historical_data(days: int = 30):
 
     client = db.Historical(api_key)
     
-    end_date = datetime.now()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
     # Symbols: NQ.FUT and MNQ.FUT are the parent symbols for continuous futures

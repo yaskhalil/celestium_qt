@@ -145,21 +145,21 @@ class ScheduledEngine:
         # 1. Fast Monitor Loop (Every 1 minute)
         self.scheduler.add_job(
             self.tick_monitor, 
-            CronTrigger(day_of_week='mon-fri', hour='9-15', minute='*', timezone='US/Eastern'),
+            CronTrigger(day_of_week='mon-fri', hour='9-15', minute='*', timezone='America/New_York'),
             id='monitor_tick'
         )
         
         # 2. Slow Signal Loop (Every 5 minutes)
         self.scheduler.add_job(
             self.tick_signal,
-            CronTrigger(day_of_week='mon-fri', hour='9-15', minute='0,5,10,15,20,25,30,35,40,45,50,55', timezone='US/Eastern'),
+            CronTrigger(day_of_week='mon-fri', hour='9-15', minute='0,5,10,15,20,25,30,35,40,45,50,55', timezone='America/New_York'),
             id='signal_tick'
         )
         
         # 3. EOD Flatten (4:00 PM ET)
         self.scheduler.add_job(
             self.tick_monitor,
-            CronTrigger(day_of_week='mon-fri', hour='16', minute='0', timezone='US/Eastern'),
+            CronTrigger(day_of_week='mon-fri', hour='16', minute='0', timezone='America/New_York'),
             id='market_tick_eod'
         )
         

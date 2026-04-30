@@ -87,6 +87,6 @@ systemctl restart celestium
 ---
 
 ## Troubleshooting
-- **Missing Timezone:** If the bot fails with a `ZoneInfoNotFoundError`, run `apt install tzdata`.
+- **Missing Timezone:** If the bot fails with a `ZoneInfoNotFoundError`, ensure the `tzdata` Python package is installed (`pip install tzdata` or `uv sync`). On some Linux systems, you may also need `apt install tzdata`.
 - **Model Missing:** If `models/alpha_v1.ubj` is not found, run `uv run python3 scripts/train.py` to generate the trading model.
 - **Webull Pending:** If logs show `status: PENDING`, approve the API connection in your Webull mobile app.

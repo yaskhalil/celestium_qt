@@ -1,7 +1,7 @@
 import databento as db
 import polars as pl
 import structlog
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from src.data.duck_storage import DuckDBStorage
 
 logger = structlog.get_logger()
@@ -15,7 +15,7 @@ class DatabentoIngestor:
         logger.info("Ingestor: Fetching data from Databento", symbol=symbol)
         try:
             client = db.Historical(self.api_key)
-            end = datetime.now()
+            end = datetime.now(timezone.utc)
             start = end - timedelta(minutes=lookback_minutes)
             
             # Continuous Futures use 'parent', Stocks use 'raw_symbol'
