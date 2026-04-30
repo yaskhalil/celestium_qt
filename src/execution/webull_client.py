@@ -67,7 +67,8 @@ class WebullClient:
         uri: str, 
         params: Optional[Dict[str, Any]] = None, 
         body: Optional[Dict[str, Any]] = None,
-        is_quote: bool = False
+        is_quote: bool = False,
+        version: str = "v1"
     ) -> Dict[str, Any]:
         params = params or {}
         timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -88,7 +89,7 @@ class WebullClient:
             "x-signature-algorithm": "HMAC-SHA1",
             "x-signature-version": "1.0",
             "x-signature": signature,
-            "x-version": "v1",
+            "x-version": version,
             "Content-Type": "application/json",
             "x-webull-client-source": "sdk"
         }
@@ -98,22 +99,37 @@ class WebullClient:
         url = target_base + uri
         response = await self.client.request(method=method, url=url, params=params, content=body_str, headers=headers)
         if response.status_code != 200:
-            print(f"Request Failed: {response.status_code} {response.text} URL: {url}")
+            print(f"Request Failed: {response.status_code} {response.text} URL: {url} Version: {version}")
         response.raise_for_status()
         return response.json()
 
-    async def create_token(self) -> Dict[str, Any]:
-        return await self.request("POST", "/openapi/auth/token/create", body={})
-
-    async def get_account_list(self) -> Dict[str, Any]:
-        return await self.request("GET", "/openapi/account/list")
+    async def subscribe_quotes(self, symbols: list[str], category: str = "US_STOCK"):
+        """Subscribes to market data (required for some symbols to return data in snapshots)."""
+        try:
+            # We use a dummy session_id as we are using HTTP polling, not MQTT
+            # But the Subscribe call with grab=true can sometimes trigger data activation
+            payload = {
+                "session_id": str(uuid.uuid4()),
+                "symbols": symbols,
+                "category": category,
+                "sub_types": ["SNAPSHOT", "QUOTE", "TICK"],
+                "grab": True
+            }
+            return await self.request("POST", "/openapi/market-data/streaming/subscribe", 
+                                     body=payload, is_quote=True, version="v2")
+        except Exception as e:
+            print(f"Failed to subscribe to quotes: {e}")
+            return None
 
     async def get_last_price(self, symbol: str) -> Optional[float]:
         """Fetches the latest price for a symbol from Webull."""
         try:
+            # First ensure we are 'subscribed' to activate the data feed
+            await self.subscribe_quotes([symbol])
+            
             res = await self.request("GET", "/openapi/market-data/snapshot", 
                                      params={"symbols": symbol, "category": "US_STOCK"},
-                                     is_quote=True)
+                                     is_quote=True, version="v2")
             snapshots = res.get("data", [])
             if snapshots:
                 return float(snapshots[0].get("last_price", 0))
@@ -127,16 +143,13 @@ class WebullClient:
         try:
             res = await self.request("GET", "/openapi/market-data/bars", 
                                      params={"symbols": symbol, "category": "US_STOCK", "timespan": timespan, "count": count},
-                                     is_quote=True)
+                                     is_quote=True, version="v2")
             data_list = res.get("data", [])
             if not data_list:
                 return pl.DataFrame()
             
-            # Webull returns bars in a nested list or dict
-            # Standard OpenAPI v2 returns list of bar objects
             bars = []
             for item in data_list:
-                # Adjust based on actual response discovery
                 bars.append({
                     "timestamp": datetime.fromisoformat(item["time"].replace("Z", "+00:00")),
                     "symbol": symbol,
