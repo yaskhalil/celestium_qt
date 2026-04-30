@@ -56,12 +56,26 @@ class ScheduledEngine:
         # 0. Ingest latest data (Required for exit price check)
         try:
             await self.ingestor.fetch_and_persist(symbol)
-            context = self.buffer.get_context(symbol, window=5)
-            if not context.is_empty():
-                last_bar = context.tail(1).to_dicts()[0]
-                current_price = last_bar["close"]
         except Exception as e:
-            logger.error("Engine: Ingestion failed, attempting Webull fallback", error=str(e))
+            err_msg = str(e)
+            if "license" in err_msg.lower():
+                logger.warning("Engine: Databento today's data restricted. Using Webull fallback for context.")
+                # Fallback: Fetch bars from Webull and insert into buffer
+                try:
+                    bars = await self.webull_client.get_bars(symbol, count=10)
+                    if not bars.is_empty():
+                        self.ingestor.storage.insert_ohlcv(bars)
+                        logger.info("Engine: Webull bars injected into storage", count=len(bars))
+                except Exception as webull_err:
+                    logger.error("Engine: Webull bar fallback failed", error=str(webull_err))
+            else:
+                logger.error("Engine: Ingestion failed, attempting price-only Webull fallback", error=str(e))
+
+        # Check buffer for price
+        context = self.buffer.get_context(symbol, window=5)
+        if not context.is_empty():
+            last_bar = context.tail(1).to_dicts()[0]
+            current_price = last_bar["close"]
 
         # Fallback to Webull for real-time price monitoring if ingestion failed or was empty
         if current_price is None:
@@ -105,7 +119,19 @@ class ScheduledEngine:
             return
 
         if context.is_empty() or len(context) < 111:
-            logger.warning("Engine: Insufficient data context", length=len(context))
+            logger.warning("Engine: Insufficient data context. Attempting Webull historical fallback.", length=len(context))
+            try:
+                # Try to fill the gap with Webull bars
+                bars = await self.webull_client.get_bars(symbol, count=150)
+                if not bars.is_empty():
+                    self.ingestor.storage.insert_ohlcv(bars)
+                    context = self.buffer.get_context(symbol, window=150)
+                    logger.info("Engine: Context backfilled from Webull", length=len(context))
+            except Exception as e:
+                logger.error("Engine: Webull historical fallback failed", error=str(e))
+
+        if context.is_empty() or len(context) < 111:
+            logger.warning("Engine: Still insufficient data context after fallback", length=len(context))
             return
             
         # Don't enter new trades if already in one

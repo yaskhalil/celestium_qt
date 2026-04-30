@@ -9,13 +9,15 @@ from typing import Optional, Dict, Any
 from urllib.parse import quote
 
 class WebullClient:
-    def __init__(self, app_key: str, app_secret: str, access_token: Optional[str] = None, base_url: str = "https://api.webull.com"):
+    def __init__(self, app_key: str, app_secret: str, access_token: Optional[str] = None, 
+                 base_url: str = "https://api.webull.com",
+                 quotes_url: str = "https://usquotes-api.webullfintech.com"):
         self.app_key = app_key
         self.app_secret = app_secret
         self.access_token = access_token
         self.base_url = base_url
-        self.host = base_url.replace("https://", "").replace("http://", "").split("/")[0]
-        self.client = httpx.AsyncClient(base_url=base_url)
+        self.quotes_url = quotes_url
+        self.client = httpx.AsyncClient()
 
     def _generate_signature(
         self, 
@@ -23,6 +25,7 @@ class WebullClient:
         params: Dict[str, Any], 
         timestamp: str, 
         nonce: str, 
+        host: str,
         body: Optional[str] = None
     ) -> str:
         sign_params = {
@@ -31,7 +34,7 @@ class WebullClient:
             "x-signature-version": "1.0",
             "x-signature-algorithm": "HMAC-SHA1",
             "x-signature-nonce": nonce,
-            "host": self.host
+            "host": host
         }
         for k, v in params.items():
             k_lower = k.lower()
@@ -63,21 +66,22 @@ class WebullClient:
         method: str, 
         uri: str, 
         params: Optional[Dict[str, Any]] = None, 
-        body: Optional[Dict[str, Any]] = None
+        body: Optional[Dict[str, Any]] = None,
+        is_quote: bool = False
     ) -> Dict[str, Any]:
         params = params or {}
         timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        nonce = str(uuid.uuid4()) # Keep hyphens
-
+        nonce = str(uuid.uuid4())
         
-        # If method is POST and body is None, use empty dict to ensure BodyMD5 is generated if needed
-        # Or check if Webull expects no body
+        target_base = self.quotes_url if is_quote else self.base_url
+        host = target_base.replace("https://", "").replace("http://", "").split("/")[0]
+        
         body_str = json.dumps(body, separators=(',', ':')) if body is not None else None
         
-        signature = self._generate_signature(uri=uri, params=params, timestamp=timestamp, nonce=nonce, body=body_str)
+        signature = self._generate_signature(uri=uri, params=params, timestamp=timestamp, nonce=nonce, host=host, body=body_str)
         
         headers = {
-            "Host": self.host,
+            "Host": host,
             "x-app-key": self.app_key,
             "x-timestamp": timestamp,
             "x-signature-nonce": nonce,
@@ -91,14 +95,14 @@ class WebullClient:
         if self.access_token:
             headers["x-access-token"] = self.access_token
         
-        response = await self.client.request(method=method, url=uri, params=params, content=body_str, headers=headers)
+        url = target_base + uri
+        response = await self.client.request(method=method, url=url, params=params, content=body_str, headers=headers)
         if response.status_code != 200:
-            print(f"Request Failed: {response.status_code} {response.text}")
+            print(f"Request Failed: {response.status_code} {response.text} URL: {url}")
         response.raise_for_status()
         return response.json()
 
     async def create_token(self) -> Dict[str, Any]:
-        # Try passing empty dict as body for POST
         return await self.request("POST", "/openapi/auth/token/create", body={})
 
     async def get_account_list(self) -> Dict[str, Any]:
@@ -107,8 +111,9 @@ class WebullClient:
     async def get_last_price(self, symbol: str) -> Optional[float]:
         """Fetches the latest price for a symbol from Webull."""
         try:
-            # Using the snapshot endpoint which usually doesn't require complex subscriptions for basic info
-            res = await self.request("GET", "/openapi/market/snapshot", params={"symbols": symbol, "category": "US_STOCK"})
+            res = await self.request("GET", "/openapi/market-data/snapshot", 
+                                     params={"symbols": symbol, "category": "US_STOCK"},
+                                     is_quote=True)
             snapshots = res.get("data", [])
             if snapshots:
                 return float(snapshots[0].get("last_price", 0))
@@ -116,6 +121,35 @@ class WebullClient:
         except Exception as e:
             print(f"Failed to fetch price from Webull: {e}")
             return None
+
+    async def get_bars(self, symbol: str, timespan: str = "M1", count: int = 200) -> pl.DataFrame:
+        """Fetches historical bars from Webull."""
+        try:
+            res = await self.request("GET", "/openapi/market-data/bars", 
+                                     params={"symbols": symbol, "category": "US_STOCK", "timespan": timespan, "count": count},
+                                     is_quote=True)
+            data_list = res.get("data", [])
+            if not data_list:
+                return pl.DataFrame()
+            
+            # Webull returns bars in a nested list or dict
+            # Standard OpenAPI v2 returns list of bar objects
+            bars = []
+            for item in data_list:
+                # Adjust based on actual response discovery
+                bars.append({
+                    "timestamp": datetime.fromisoformat(item["time"].replace("Z", "+00:00")),
+                    "symbol": symbol,
+                    "open": float(item["open"]),
+                    "high": float(item["high"]),
+                    "low": float(item["low"]),
+                    "close": float(item["close"]),
+                    "volume": int(item["volume"])
+                })
+            return pl.from_dicts(bars)
+        except Exception as e:
+            print(f"Failed to fetch bars from Webull: {e}")
+            return pl.DataFrame()
 
     async def close(self):
         await self.client.aclose()
