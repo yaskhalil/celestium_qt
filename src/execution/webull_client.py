@@ -4,6 +4,7 @@ import base64
 import httpx
 import uuid
 import json
+import polars as pl
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from urllib.parse import quote
