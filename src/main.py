@@ -1,6 +1,6 @@
 import asyncio
 import structlog
-from src.execution.webull_client import WebullClient
+from src.execution.alpaca_client import AlpacaClient
 from src.core.engine import ScheduledEngine
 from src.core.oracle import AccountState
 from src.config import settings
@@ -21,20 +21,20 @@ def verify_timezone():
 async def main():
     """Async entry point (The Event Loop)"""
     verify_timezone()
-    logger.info("Initializing CelestiumQT (Hybrid Mode: Databento + Webull)")
+    logger.info("Initializing CelestiumQT (Alpaca Unified Mode)")
     
-    # 1. Initialize native WebullClient
-    webull_client = WebullClient(
-        app_key=settings.WEBULL_APP_KEY,
-        app_secret=settings.WEBULL_APP_SECRET,
-        access_token=settings.WEBULL_ACCESS_TOKEN
+    # 1. Initialize native AlpacaClient
+    alpaca_client = AlpacaClient(
+        api_key=settings.ALPACA_API_KEY,
+        secret_key=settings.ALPACA_SECRET_KEY,
+        base_url=settings.ALPACA_BASE_URL
     )
     
     # 2. Load Persistent Account State
     state = AccountState.load()
     
     # 3. Initialize the scheduled engine
-    engine = ScheduledEngine(webull_client, state)
+    engine = ScheduledEngine(alpaca_client, state)
     engine.start()
     
     # Start the event loop
@@ -49,7 +49,7 @@ async def main():
         # Stop scheduler and save state
         await engine.stop()
         state.save()
-        await webull_client.close()
+        await alpaca_client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
