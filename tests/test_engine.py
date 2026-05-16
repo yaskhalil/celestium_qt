@@ -1,41 +1,38 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 import polars as pl
 from src.core.engine import ScheduledEngine
 import asyncio
 
 @pytest.fixture
-def mock_webull_client():
+def mock_alpaca_client():
     return MagicMock()
 
 @pytest.fixture
-def engine(mock_webull_client):
+def engine(mock_alpaca_client):
     with patch('src.core.engine.DuckDBBuffer'), \
          patch('src.core.engine.BooleanStateSpace'), \
          patch('src.core.engine.Oracle'), \
-         patch('src.core.engine.WebullRouter'), \
+         patch('src.core.engine.AlpacaRouter'), \
          patch('src.core.engine.Classifier'), \
          patch('src.core.engine.Allocator'), \
          patch('src.core.engine.Advisor'), \
-         patch('src.core.engine.DatabentoIngestor'):
-        yield ScheduledEngine(mock_webull_client)
+         patch('src.core.engine.AlpacaIngestor'):
+        yield ScheduledEngine(mock_alpaca_client)
 
 @pytest.mark.asyncio
 async def test_engine_tick_attractor_veto(engine):
     """Test that the engine skips if the state is not in an attractor."""
     # Setup: mock data that is NOT in attractor
     engine.buffer.get_context.return_value = pl.DataFrame({"close": [100.0] * 150})
-    engine.bn.map_to_bits.return_value = 5 # Not in {1, 3, 7}
+    engine.bn.map_to_bits.return_value = 5 # Not in target attractors
     engine.bn.is_in_attractor.return_value = False
     
-    from unittest.mock import AsyncMock
     engine.router._verify_position = AsyncMock()
     engine.router.current_position = 0
 
     await engine.tick_signal()
     
-    # Check if "Not in attractor" was logged (need to check how veto_logs are updated)
-    # In current engine.py, it doesn't add to veto_logs if attractor check fails, it just logs and returns.
     engine.classifier.predict.assert_not_called()
 
 @pytest.mark.asyncio
@@ -54,7 +51,6 @@ async def test_engine_tick_success(engine):
     engine.allocator.calculate_size.return_value = 1
     engine.oracle.validate_trade.return_value = True
     
-    from unittest.mock import AsyncMock, ANY
     engine.router._verify_position = AsyncMock()
     engine.router.current_position = 0
 
@@ -62,4 +58,8 @@ async def test_engine_tick_success(engine):
     with patch.object(engine.router, 'execute_trade', new_callable=AsyncMock, return_value=True) as mock_run:
         await engine.tick_signal()
         mock_run.assert_called_once()
-        engine.router.execute_trade.assert_called_with(ANY, 1, "BUY", price=100.0)
+        # Verify the call parameters
+        args, kwargs = mock_run.call_args
+        assert args[1] == 1 # Quantity
+        assert args[2] == "BUY"
+        assert kwargs["price"] == 100.0

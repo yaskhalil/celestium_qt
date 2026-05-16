@@ -35,10 +35,9 @@ uv sync
 ### 3. Configuration (.env)
 Create a `.env` file in `/opt/celestium_qt/` to store your private keys:
 ```bash
-WEBULL_APP_KEY="your_key"
-WEBULL_APP_SECRET="your_secret"
-WEBULL_ACCOUNT_ID="your_id"
-DATABENTO_API_KEY="your_key"
+ALPACA_API_KEY="your_key"
+ALPACA_SECRET_KEY="your_secret"
+ALPACA_BASE_URL="https://paper-api.alpaca.markets"
 SHADOW_MODE="True"
 ```
 
@@ -89,4 +88,4 @@ systemctl restart celestium
 ## Troubleshooting
 - **Missing Timezone:** If the bot fails with a `ZoneInfoNotFoundError`, ensure the `tzdata` Python package is installed (`pip install tzdata` or `uv sync`). On some Linux systems, you may also need `apt install tzdata`.
 - **Model Missing:** If `models/alpha_v1.ubj` is not found, run `uv run python3 scripts/train.py` to generate the trading model.
-- **Webull Pending:** If logs show `status: PENDING`, approve the API connection in your Webull mobile app.
+- **Shadow Mode:** Use `SHADOW_MODE="True"` to test with Alpaca Paper Trading without risking real capital.

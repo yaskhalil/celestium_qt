@@ -21,8 +21,14 @@ class Settings(BaseSettings):
     # Databento (Historical Data)
     DATABENTO_API_KEY: str = Field(default="YOUR_DATABENTO_KEY", alias="DATABENTO_API_KEY")
 
+    # Alpaca (Unified Data & Execution)
+    ALPACA_API_KEY: str = Field(default="", alias="ALPACA_API_KEY")
+    ALPACA_SECRET_KEY: str = Field(default="", alias="ALPACA_SECRET_KEY")
+    ALPACA_BASE_URL: str = Field(default="https://paper-api.alpaca.markets", alias="ALPACA_BASE_URL")
+
     # Trading Target
-    SYMBOL: str = "AAPL"
+    SYMBOL: str = "SPLG"
+    CONTEXT_SYMBOL: str = "QQQ"
     EXCHANGE: str = "NASD"
     
     # Risk Limits (Bulenox 50K EOD - Option 2)

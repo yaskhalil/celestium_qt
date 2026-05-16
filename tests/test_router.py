@@ -1,14 +1,15 @@
 import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, ANY, patch
-from src.execution.router import WebullRouter
+from src.execution.router import AlpacaRouter
 from src.core.oracle import AccountState
-from src.execution.webull_client import WebullClient
+from src.execution.alpaca_client import AlpacaClient
 
 @pytest.fixture
 def mock_client():
-    client = MagicMock(spec=WebullClient)
-    client.request = AsyncMock()
+    client = MagicMock(spec=AlpacaClient)
+    client.get_position = AsyncMock()
+    client.place_order = AsyncMock()
     return client
 
 @pytest.fixture
@@ -21,46 +22,44 @@ def mock_state():
 
 @pytest.mark.asyncio
 async def test_execute_trade_limit_order(mock_client, mock_state):
-    router = WebullRouter(mock_client, mock_state)
+    router = AlpacaRouter(mock_client, mock_state)
     
-    # Mock _verify_position response
-    mock_client.request.side_effect = [
-        {"data": []}, # For _verify_position
-        {"order_id": "webull-order-999"} # For place_order
-    ]
+    # Mock responses
+    mock_client.get_position.return_value = 0.0
+    mock_client.place_order.return_value = {"id": "alpaca-order-999"}
     
     with patch("src.execution.router.settings.SHADOW_MODE", False):
-        order_id = await router.execute_trade("AAPL", 5, "BUY", 150.25)
+        order_id = await router.execute_trade("SPLG", 5, "BUY", 150.25)
     
-    assert order_id == "webull-order-999"
-    assert mock_client.request.call_count == 2
+    assert order_id == "alpaca-order-999"
+    assert mock_client.get_position.call_count == 1
+    assert mock_client.place_order.call_count == 1
     
-    # Verify order parameters in the second call
-    args, kwargs = mock_client.request.call_args_list[1]
-    assert args[0] == "POST"
-    assert args[1] == "/openapi/order/place"
-    body = kwargs["body"]
-    assert body["order_type"] == "LIMIT"
-    assert body["limit_price"] == "150.25"
-    assert body["quantity"] == "5"
-    assert body["side"] == "BUY"
+    # Verify order parameters
+    mock_client.place_order.assert_called_once_with(
+        symbol="SPLG",
+        qty=5,
+        side="BUY",
+        order_type="limit",
+        limit_price=150.25
+    )
 
 @pytest.mark.asyncio
 async def test_position_tracking(mock_client, mock_state):
-    router = WebullRouter(mock_client, mock_state)
+    router = AlpacaRouter(mock_client, mock_state)
     
     # Setup mock to return a position
-    mock_client.request.return_value = {"data": [{"symbol": "AAPL", "position": "10"}]}
+    mock_client.get_position.return_value = 10.0
     
     # Verify position updates router state
-    await router._verify_position("AAPL")
+    await router._verify_position("SPLG")
     
     assert router.current_position == 10.0
-    mock_client.request.assert_called_once_with("GET", "/openapi/account/positions", params=ANY)
+    mock_client.get_position.assert_called_once_with("SPLG")
 
     # Setup mock to return no position
-    mock_client.request.return_value = {"data": []}
+    mock_client.get_position.return_value = 0.0
     
-    await router._verify_position("AAPL")
+    await router._verify_position("SPLG")
     
     assert router.current_position == 0.0

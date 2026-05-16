@@ -1,4 +1,5 @@
 import polars as pl
+from typing import Optional
 
 class BooleanStateSpace:
     """
@@ -12,7 +13,7 @@ class BooleanStateSpace:
     The transition is defined by x_i(t+1) = f_i(x_1(t), ..., x_n(t)).
     """
     
-    def map_to_bits(self, context: pl.DataFrame) -> int:
+    def map_to_bits(self, context: pl.DataFrame, context_market: Optional[pl.DataFrame] = None) -> int:
         """
         Map indicator states into a bitset integer.
         
@@ -20,13 +21,15 @@ class BooleanStateSpace:
         - Bit 0: price > sma_20 (x_0 = 1 if P > SMA_20 else 0)
         - Bit 1: hurst > 0.5    (x_1 = 1 if H > 0.5 else 0)
         - Bit 2: adx > 25       (x_2 = 1 if ADX > 25 else 0)
+        - Bit 3: market > sma_20 (x_3 = 1 if Market > SMA_20 else 0) [New]
         
         Returns the integer representation: Σ x_i * 2^i
         """
         if context.is_empty():
             return 0
             
-        row = context.row(0, named=True)
+        # Use tail(1) to get the most recent bar
+        row = context.tail(1).to_dicts()[0]
         state = 0
         
         if row.get("close", 0) > row.get("sma_20", 0):
@@ -37,6 +40,12 @@ class BooleanStateSpace:
             
         if row.get("adx", 0) > 25:
             state |= (1 << 2)
+
+        # Bit 3: Broad Market Context (QQQ)
+        if context_market is not None and not context_market.is_empty():
+            market_row = context_market.tail(1).to_dicts()[0]
+            if market_row.get("close", 0) > market_row.get("sma_20", 0):
+                state |= (1 << 3)
             
         return state
 
@@ -44,12 +53,10 @@ class BooleanStateSpace:
         """
         Check if state belongs to target attractor set A.
         
-        Formal Definition:
-        Let S = {0, 1}^n be the state space.
-        Let F: S -> S be the synchronous update function.
-        A subset A ⊆ S is an attractor if F(A) = A.
-        
-        For this implementation, we define a static target attractor set A = {1, 3, 7}.
+        For this implementation, we define a static target attractor set.
+        Original: {1, 3, 7}.
+        Updated for 4-bit state: We include the market-aligned versions.
         """
-        target_attractors = {1, 3, 7}
+        # If Bit 3 is high (market uptrend), we allow the original signals
+        target_attractors = {1, 3, 7, 9, 11, 15} # 9=1+8, 11=3+8, 15=7+8
         return state in target_attractors
