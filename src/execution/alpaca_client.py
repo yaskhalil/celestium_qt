@@ -9,9 +9,14 @@ logger = structlog.get_logger()
 
 class AlpacaClient:
     def __init__(self, api_key: str, secret_key: str, base_url: str = "https://paper-api.alpaca.markets"):
-        self.api_key = api_key
-        self.secret_key = secret_key
+        self.api_key = api_key.strip()
+        self.secret_key = secret_key.strip()
         self.base_url = base_url
+
+        # Log key prefix for diagnostic purposes
+        key_prefix = self.api_key[:4] if len(self.api_key) >= 4 else "NONE"
+        logger.info("AlpacaClient initialized", base_url=self.base_url, key_prefix=key_prefix)
+
         # Data API is separate from Trading API
         self.data_url = "https://data.alpaca.markets/v2"
         self.headers = {
