@@ -25,7 +25,9 @@ class AlpacaClient:
             "Accept": "application/json"
         }
 
-    async def _request(self, method: str, url: str, params: Optional[Dict[str, Any]] = None, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _request(self, method: str, url: str, params: Optional[Dict[str, Any]] = None, body: Optional[Dict[str, Any]] = None, ignore_status: Optional[list] = None) -> Dict[str, Any]:
+        if ignore_status is None:
+            ignore_status = []
         async with httpx.AsyncClient() as client:
             response = await client.request(
                 method=method,
@@ -36,7 +38,8 @@ class AlpacaClient:
                 timeout=10.0
             )
             if response.status_code != 200:
-                logger.error("Alpaca API Error", status=response.status_code, text=response.text, url=url)
+                if response.status_code not in ignore_status:
+                    logger.error("Alpaca API Error", status=response.status_code, text=response.text, url=url)
                 response.raise_for_status()
             return response.json()
 
@@ -93,7 +96,7 @@ class AlpacaClient:
         """Fetches current position for a symbol."""
         url = f"{self.base_url}/v2/positions/{symbol}"
         try:
-            res = await self._request("GET", url)
+            res = await self._request("GET", url, ignore_status=[404])
             return float(res.get("qty", 0))
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
