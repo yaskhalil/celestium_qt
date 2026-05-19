@@ -28,7 +28,12 @@ class AlpacaIngestor:
                 return
 
             # AlpacaClient already returns a Polars DataFrame with the correct schema
-            # But we ensure it matches the DuckDB storage expectations
+            # We must convert the timezone to NY and strip it for DuckDB TIMESTAMP_NS
+            df = df.with_columns(
+                pl.col("timestamp").dt.convert_time_zone("America/New_York").dt.replace_time_zone(None)
+            )
+
+            # Ensure it matches the DuckDB storage expectations
             df = df.select([
                 pl.col("timestamp"),
                 pl.col("symbol"),

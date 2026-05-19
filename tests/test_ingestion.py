@@ -33,6 +33,14 @@ async def test_alpaca_ingestor_fetch_success():
     # Verify storage insertion
     ingestor.storage.insert_ohlcv.assert_called_once()
     inserted_df = ingestor.storage.insert_ohlcv.call_args[0][0]
+    
+    # Verify timestamp transformation (should be naive NY time)
+    ts = inserted_df["timestamp"][0]
+    assert ts.tzinfo is None
+    # UTC 10:00:00 should be NY 05:00:00 or 06:00:00 depending on DST
+    # In 2026 April, it's EDT (UTC-4), so 10:00 UTC is 06:00 EDT.
+    assert ts.hour == 6
+    
     assert len(inserted_df) == 1
     assert inserted_df["symbol"][0] == "SPLG"
     assert inserted_df["close"][0] == 100.5
