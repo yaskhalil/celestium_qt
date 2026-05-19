@@ -4,7 +4,9 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 import structlog
 import os
+import asyncio
 from src.config import settings
+from src.core.notifier import TelegramNotifier
 
 logger = structlog.get_logger()
 
@@ -89,6 +91,7 @@ class Oracle:
     
     def __init__(self, state: AccountState):
         self.state = state
+        self.notifier = TelegramNotifier()
 
     def validate_trade(self, quantity: float, price: float, side: str, 
                        current_hurst: float = 0.0, 
@@ -114,15 +117,18 @@ class Oracle:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS
             self.state.save()
             logger.error("VETO: Hard DLL Breached")
+            asyncio.create_task(self.notifier.notify_risk_veto("❌ HARD DLL BREACHED - Trading Paused"))
             return False
             
         if self.state.current_daily_pnl >= self.state.daily_profit_ceiling:
             logger.error("VETO: Daily Profit Ceiling Reached")
+            asyncio.create_task(self.notifier.notify_risk_veto("✅ Daily Profit Ceiling Reached - Session Closed"))
             return False
 
         # 4. EOD Floor
         if self.state.balance <= self.state.safety_net_floor:
             logger.error("VETO: Floor Breached")
+            asyncio.create_task(self.notifier.notify_risk_veto("🚨 ACCOUNT FLOOR BREACHED"))
             return False
 
         # 5. GFV Protection (T+1 Settlement for $400 Equity Account)

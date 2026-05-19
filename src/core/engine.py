@@ -15,6 +15,7 @@ from src.core.advisor import Advisor
 
 from src.data.ingestion import AlpacaIngestor
 from src.execution.alpaca_client import AlpacaClient
+from src.core.notifier import TelegramNotifier
 
 logger = structlog.get_logger()
 
@@ -37,6 +38,7 @@ class ScheduledEngine:
         self.router = AlpacaRouter(alpaca_client, self.account_state)
         self.ingestor = AlpacaIngestor(client=alpaca_client)
         self.advisor = Advisor()
+        self.notifier = TelegramNotifier()
         
         self.scheduler = AsyncIOScheduler()
         self.running = False
@@ -173,6 +175,7 @@ class ScheduledEngine:
     def start(self):
         """Starts the scheduler with dual-loop configuration."""
         logger.info("Engine: Starting scheduler")
+        asyncio.create_task(self.notifier.notify_system_status("🚀 CelestiumQT Trading Engine Started"))
         
         # 1. Fast Monitor Loop (Every 1 minute)
         self.scheduler.add_job(
@@ -201,6 +204,7 @@ class ScheduledEngine:
     async def stop(self):
         """Stops the scheduler and generates summary."""
         logger.info("Engine: Stopping scheduler")
+        await self.notifier.notify_system_status("🛑 CelestiumQT Trading Engine Stopped")
         self.scheduler.shutdown()
         self.running = False
         

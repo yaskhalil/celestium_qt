@@ -1,0 +1,2 @@
+- [x] Task 1: Fix Timestamp in Ingestor
+- [x] Task 2: Suppress 404 Logging in AlpacaClient

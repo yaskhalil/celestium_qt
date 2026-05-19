@@ -51,7 +51,7 @@ def test_backtest_engine_fill_logic():
     start_time = datetime(2026, 1, 1, 9, 30)
     data = []
     for i in range(120): # Need 110 for context
-        price = 20000.0
+        price = 100.0
         data.append({
             "timestamp": start_time + timedelta(minutes=i),
             "open": price,
@@ -64,9 +64,9 @@ def test_backtest_engine_fill_logic():
         })
     
     # Inject a "Stop Loss" event in the last bar
-    # Entry at 20000. SL (0.5 ATR) = 19990.
+    # Entry at 100. SL (0.5 ATR) = 90.
     last_idx = len(data) - 1
-    data[last_idx]["low"] = 19980.0 # Hits SL
+    data[last_idx]["low"] = 80.0 # Hits SL
     
     df = pl.DataFrame(data)
     
@@ -78,8 +78,8 @@ def test_backtest_engine_fill_logic():
     assert len(engine.trades) > 0
     last_trade = engine.trades[0]
     assert last_trade["reason"] == "STOP_LOSS"
-    # PnL for 2 MNQ: (19990 - 20000) * 2 * 2 = -$40
-    assert last_trade["pnl"] == -40.0
+    # PnL for 5 MNQ: (90 - 100) * 5 * 2 = -$100
+    assert last_trade["pnl"] == -100.0
 
 def test_backtest_engine_dll_veto():
     """
@@ -93,7 +93,7 @@ def test_backtest_engine_dll_veto():
     start_time = datetime(2026, 1, 1, 9, 30)
     data = []
     for i in range(150):
-        price = 20000.0 - (i * 10) # Continuous drop
+        price = 500.0 - (i * 0.1) # Continuous drop
         data.append({
             "timestamp": start_time + timedelta(minutes=i),
             "open": price,

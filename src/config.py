@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     ADVISOR_URL: str = Field(default="http://localhost:11434/api/generate", alias="ADVISOR_URL")
     ADVISOR_MODEL: str = Field(default="llama3", alias="ADVISOR_MODEL")
 
+    # Telegram Notifications
+    TELEGRAM_ENABLED: bool = Field(default=False, alias="TELEGRAM_ENABLED")
+    TELEGRAM_BOT_TOKEN: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    TELEGRAM_CHAT_ID: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+
     # Payout Rules
     SAFETY_THRESHOLD_RESERVE: float = 2600.0
     MIN_WITHDRAWAL: float = 1000.0
