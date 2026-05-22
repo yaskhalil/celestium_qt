@@ -117,18 +117,18 @@ class Oracle:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS
             self.state.save()
             logger.error("VETO: Hard DLL Breached")
-            asyncio.create_task(self.notifier.notify_risk_veto("❌ HARD DLL BREACHED - Trading Paused"))
+            self._safe_notify("❌ HARD DLL BREACHED - Trading Paused")
             return False
             
         if self.state.current_daily_pnl >= self.state.daily_profit_ceiling:
             logger.error("VETO: Daily Profit Ceiling Reached")
-            asyncio.create_task(self.notifier.notify_risk_veto("✅ Daily Profit Ceiling Reached - Session Closed"))
+            self._safe_notify("✅ Daily Profit Ceiling Reached - Session Closed")
             return False
 
         # 4. EOD Floor
         if self.state.balance <= self.state.safety_net_floor:
             logger.error("VETO: Floor Breached")
-            asyncio.create_task(self.notifier.notify_risk_veto("🚨 ACCOUNT FLOOR BREACHED"))
+            self._safe_notify("🚨 ACCOUNT FLOOR BREACHED")
             return False
 
         # 5. GFV Protection (T+1 Settlement for $400 Equity Account)
@@ -140,6 +140,13 @@ class Oracle:
                 return False
 
         return True
+
+    def _safe_notify(self, message: str):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.notifier.notify_risk_veto(message))
+        except RuntimeError:
+            pass # No event loop running (e.g. during synchronous backtest)
 
     def process_eod_anchor(self):
         """Finalizes daily session and handles T+1 cash settlement."""

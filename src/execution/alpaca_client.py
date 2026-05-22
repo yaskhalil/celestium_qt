@@ -43,7 +43,7 @@ class AlpacaClient:
                 response.raise_for_status()
             return response.json()
 
-    async def get_bars(self, symbol: str, timeframe: str = "1Min", limit: int = 200) -> pl.DataFrame:
+    async def get_bars(self, symbol: str, timeframe: str = "5Min", limit: int = 200) -> pl.DataFrame:
         """Fetches historical bars from Alpaca Market Data API v2."""
         url = f"{self.data_url}/stocks/bars"
         params = {

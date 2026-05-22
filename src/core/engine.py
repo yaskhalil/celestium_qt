@@ -148,8 +148,9 @@ class ScheduledEngine:
         if signal_prob > settings.SIGNAL_THRESHOLD:
             # 5. Allocator
             last_bar = context.tail(1).to_dicts()[0]
+            decision_price = last_bar["close"]
             atr = last_bar["atr"] if "atr" in last_bar else 1.0
-            size = self.allocator.calculate_size(signal_prob, atr, self.account_state.balance)
+            size = self.allocator.calculate_size(signal_prob, atr, self.account_state.balance, decision_price)
             
             if size > 0:
                 # 6. Oracle validation

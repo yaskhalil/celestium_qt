@@ -11,32 +11,23 @@ logger = structlog.get_logger()
 
 def run_backtest():
     """Main entry point for running the recalibrated backtest."""
-    data_path = "data/processed/training_data.parquet"
+    # 1. Load Data from Databento Parquet
+    data_path = f"data/processed/databento_{settings.SYMBOL.lower()}.parquet"
     
     if not os.path.exists(data_path):
-        logger.error("Processed data not found. Run training/data prep first.", path=data_path)
+        logger.warning(f"Data missing at {data_path}. Running Databento ingestion...")
+        from scripts.ingest_databento import ingest_historical_data
+        ingest_historical_data(days=365)
+        
+    if not os.path.exists(data_path):
+        logger.error("Data ingestion failed. Check your DATABENTO_API_KEY.")
         return
 
-    # 1. Load Data
-    logger.info("Loading Data", path=data_path)
+    logger.info("Loading Data from Databento Parquet", path=data_path)
     df = pl.read_parquet(data_path)
-    
-    # NORMALIZE FOR $400 ACCOUNT:
-    # Divide NQ prices (~18,000) by 400 to simulate a ~$45 stock (e.g. SPLG-like)
-    if df["close"].mean() > 1000:
-        logger.info("Normalizing NQ prices for $400 Equity Backtest (Price / 400)")
-        df = df.with_columns([
-            pl.col("open") / 400,
-            pl.col("high") / 400,
-            pl.col("low") / 400,
-            pl.col("close") / 400,
-            (pl.col("atr") / 400).alias("atr")
-        ])
 
-    # FOR VALIDATION ONLY: Force Hurst and Signal to ensure trades execute
-    logger.warning("FORCE BYPASS: Setting Hurst to 0.5 and Signal Threshold to 0.1 for validation")
-    df = df.with_columns(pl.lit(0.5).alias("hurst"))
-    settings.SIGNAL_THRESHOLD = 0.1
+    # Run with actual model predictions and actual Hurst exponent
+    settings.SIGNAL_THRESHOLD = 0.5
 
     # Ensure features are present
     if "atr" not in df.columns:

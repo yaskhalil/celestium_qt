@@ -67,3 +67,21 @@ class Classifier:
         except Exception as e:
             logger.error("Inference Error", error=str(e))
             return 0.0
+
+    def predict_features(self, feature_data: dict) -> float:
+        """
+        Fast path for Backtester. Features are already calculated.
+        """
+        if self.model is None:
+            return 0.0
+        try:
+            features = ["hurst", "hurst_gradient", "atr", "efficiency_ratio", "volatility", "adx", "vol_adj_momentum"]
+            X = np.array([[feature_data.get(f, 0.0) for f in features]])
+            dmat = xgb.DMatrix(X, feature_names=features)
+            prob = self.model.predict(dmat)[0]
+            # using debug logger so we don't spam 27000 logs
+            logger.debug("Classifier: Prediction generated", prob=round(float(prob), 3))
+            return float(prob)
+        except Exception as e:
+            logger.error("Inference Error", error=str(e))
+            return 0.0

@@ -13,38 +13,36 @@ class Allocator:
     def __init__(self, max_contracts: int = settings.MAX_POSITION_SIZE_MICRO):
         self.max_contracts = max_contracts
 
-    def calculate_size(self, probability: float, atr: float, balance: float) -> float:
+    def calculate_size(self, probability: float, atr: float, balance: float, current_price: float) -> float:
         """
         Calculates optimal contract size based on:
         1. Signal Confidence (XGBoost Probability)
         2. Market Volatility (ATR)
-        3. Risk Limits
+        3. Risk Limits (Dynamic Account Balance)
         """
-        # 1. Confidence Filter
-        # Threshold: If prob < settings.SIGNAL_THRESHOLD, we don't trade.
         if probability < settings.SIGNAL_THRESHOLD:
             return 0
             
-        # 2. Base Size calculation
-        # Simple Linear Scaling
-        confidence_multiplier = (probability - (settings.SIGNAL_THRESHOLD - 0.1)) * 2
-        base_size = self.max_contracts * confidence_multiplier
+        # Standard Risk-Based Position Sizing
+        base_risk_pct = 0.02  # Target 2% risk of total balance
         
-        # 3. Volatility Adjustment
-        # If ATR is high, we reduce size to keep dollar risk constant.
-        reference_atr = settings.REFERENCE_ATR
-        vol_multiplier = reference_atr / max(atr, 5.0) # Floor at 5.0 to avoid division by zero
+        # Scale risk by model confidence (prob 0.5 to 1.0 -> scaler 0.0 to 1.0)
+        confidence_scaler = max(0.0, (probability - settings.SIGNAL_THRESHOLD) * 2)
+        adjusted_risk_pct = base_risk_pct * confidence_scaler
         
-        final_size = base_size * vol_multiplier
+        capital_at_risk = balance * adjusted_risk_pct
+        stop_loss_distance = max(atr * settings.SL_MULTIPLIER, 0.01) # Avoid division by zero
         
-        # 4. Apex Safety Constraints
-        # Never exceed the settings.MAX_POSITION_SIZE
-        final_size = max(0.0, min(final_size, self.max_contracts))
+        # Calculate shares: (Amount we are willing to lose) / (Amount we lose per share)
+        calculated_shares = capital_at_risk / stop_loss_distance
         
-        # 5. Min size check
-        # If the math says 0.8 contracts, we take 1 if confidence is high enough.
-        # UPDATED: For fractionals, we use 0.01 as minimum.
-        if final_size < 0.01 and probability > 0.7:
+        # Hard constraint: Cannot exceed actual cash balance (accounting for 5% slippage/fees buffer)
+        max_affordable_shares = (balance * 0.95) / max(current_price, 0.01)
+        
+        final_size = min(calculated_shares, max_affordable_shares)
+        
+        # Ensure minimum fractional size
+        if final_size < 0.01 and probability > 0.6:
             final_size = 0.01
 
         logger.info("Allocator: Size calculated", 

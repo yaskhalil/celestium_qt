@@ -7,7 +7,7 @@ from src.config import settings
 
 logger = structlog.get_logger()
 
-def ingest_historical_data(days: int = 30):
+def ingest_historical_data(days: int = 365):
     """
     Ingests historical 1-minute OHLCV data from Databento using parent symbology.
     This automatically handles contract rolls for NQ and MNQ.
@@ -22,20 +22,19 @@ def ingest_historical_data(days: int = 30):
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # Symbols: NQ.FUT and MNQ.FUT are the parent symbols for continuous futures
-    targets = ["NQ.FUT", "MNQ.FUT"]
-    dataset = "GLBX.MDP3"
+    # Target dynamic symbol on US Equities dataset
+    targets = [settings.SYMBOL]
+    dataset = "DBEQ.BASIC"
 
     for symbol in targets:
         logger.info(f"Databento: Ingesting continuous data for {symbol}", start=start_date.date(), end=end_date.date())
         
         try:
-            # Directly use stype_in='parent' to get the continuous front-month data
+            # DBEQ.MAX for equities does not need stype_in="parent"
             data = client.timeseries.get_range(
                 dataset=dataset,
                 symbols=symbol,
                 schema="ohlcv-1m",
-                stype_in="parent",
                 start=start_date.strftime("%Y-%m-%d"),
                 end=end_date.strftime("%Y-%m-%d")
             )
@@ -45,12 +44,8 @@ def ingest_historical_data(days: int = 30):
                 logger.warning(f"No data returned for {symbol}")
                 continue
 
-            # Databento's to_df() for OHLCV-1m usually has a MultiIndex or just 'ts_event'
-            # We'll reset index to get the timestamp
             df = pl.from_pandas(df_raw.reset_index())
             
-            # Map columns to CelestiumQT schema
-            # Databento OHLCV-1m schema: ts_event, open, high, low, close, volume
             df = df.select([
                 pl.col("ts_event").alias("timestamp"),
                 pl.col("open").cast(pl.Float64),
@@ -60,14 +55,25 @@ def ingest_historical_data(days: int = 30):
                 pl.col("volume").cast(pl.Int64)
             ])
 
-            # Save to data/raw
-            raw_dir = "data/raw"
-            os.makedirs(raw_dir, exist_ok=True)
-            safe_name = symbol.replace(".", "_")
-            output_path = os.path.join(raw_dir, f"{safe_name}_historical.parquet")
+            # Resample to 5-minute bars
+            df = df.sort("timestamp").group_by_dynamic(
+                "timestamp",
+                every="5m"
+            ).agg([
+                pl.col("open").first(),
+                pl.col("high").max(),
+                pl.col("low").min(),
+                pl.col("close").last(),
+                pl.col("volume").sum()
+            ])
+
+            # Save to data/processed for backtest
+            proc_dir = "data/processed"
+            os.makedirs(proc_dir, exist_ok=True)
+            output_path = os.path.join(proc_dir, f"databento_{symbol.lower()}.parquet")
             
             df.write_parquet(output_path)
-            logger.info(f"Databento: Ingested {symbol} successfully", path=output_path, rows=len(df))
+            logger.info(f"Databento: Ingested and resampled {symbol} to 5m successfully", path=output_path, rows=len(df))
 
         except Exception as e:
             logger.error(f"Databento: Ingestion failed for {symbol}", error=str(e))

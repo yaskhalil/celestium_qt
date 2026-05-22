@@ -20,6 +20,7 @@ dependencies = [
     "pyarrow>=24.0.0",
     "databento>=0.76.0",
     "tzdata",
+    "rich",
 ]
 
 [dependency-groups]

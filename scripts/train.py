@@ -15,7 +15,7 @@ def prepare_data(raw_path: str) -> pl.DataFrame:
     df = pl.read_parquet(raw_path)
     
     # Extract symbol from filename
-    symbol = os.path.basename(raw_path).split("_")[0]
+    symbol = os.path.basename(raw_path).split("_")[1].replace(".parquet", "").upper()
     df = df.with_columns(pl.lit(symbol).alias("symbol"))
     
     # Normalize timestamp
@@ -23,11 +23,8 @@ def prepare_data(raw_path: str) -> pl.DataFrame:
         pl.col("timestamp").dt.cast_time_unit("us").dt.replace_time_zone(None)
     )
     
-    # FILTER: Remove ghost prices (NQ should be between 10k and 30k in 2026)
-    df = df.filter(
-        (pl.col("close") > 10000) & (pl.col("close") < 30000)
-    )
-    
+    # Sort by timestamp to ensure chronological order
+    df = df.sort("timestamp")
     # Sort by timestamp to ensure chronological order
     df = df.sort("timestamp")
     
@@ -61,26 +58,14 @@ def purged_walk_forward_cv(df: pl.DataFrame, window_size: int = 2000, gap: int =
 
 def train_alpha():
     """Main training loop for Layer 2 XGBoost."""
-    raw_data_dir = "data/raw"
-    processed_data_dir = "data/processed"
-    processed_data_path = os.path.join(processed_data_dir, "training_data.parquet")
-    
     # 1. Data Ingestion
-    all_dfs = []
-    if not os.path.exists(raw_data_dir):
-        os.makedirs(raw_data_dir, exist_ok=True)
-        
-    for file in os.listdir(raw_data_dir):
-        if file.endswith(".parquet"):
-            all_dfs.append(prepare_data(os.path.join(raw_data_dir, file)))
-            
-    if not all_dfs:
-        logger.warning("No raw data found in data/raw/. Training aborted.")
+    from src.config import settings
+    splg_path = f"data/processed/databento_{settings.SYMBOL.lower()}.parquet"
+    if not os.path.exists(splg_path):
+        logger.error(f"Data not found: {splg_path}. Run backtest to ingest first.")
         return
-
-    full_df = pl.concat(all_dfs)
-    os.makedirs(processed_data_dir, exist_ok=True)
-    full_df.write_parquet(processed_data_path)
+        
+    full_df = prepare_data(splg_path)
     
     # 2. Training
     features = ["hurst", "hurst_gradient", "atr", "efficiency_ratio", "volatility", "adx", "vol_adj_momentum"]

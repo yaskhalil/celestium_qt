@@ -49,49 +49,51 @@ class BacktestEngine:
         logger.info("Starting Hardened Backtest", rows=len(df))
         
         df = df.with_columns(pl.col("timestamp").dt.date().alias("date"))
-        days = df["date"].unique().sort()
-
-        for date in days:
-            day_data = df.filter(pl.col("date") == date)
-            self._simulate_day(day_data)
-            self._process_eod(date)
-
-        return self.get_report()
-
-    def _simulate_day(self, day_data: pl.DataFrame):
-        """Simulates one session with UTC compliance."""
-        for i in range(110, len(day_data)):
-            bar = day_data.row(i, named=True)
+        
+        current_date = None
+        
+        # Start at 110 to ensure indicators have populated
+        for i in range(110, len(df)):
+            bar = df.row(i, named=True)
             timestamp = bar["timestamp"]
+            date = bar["date"]
             
-            # Update current hurst for Oracle check
-            if "hurst" in day_data.columns:
+            if current_date != date:
+                if current_date is not None:
+                    self._process_eod(current_date)
+                current_date = date
+
+            if "hurst" in bar:
                 self.current_hurst = bar["hurst"]
 
-            # 1. Exit Logic (Bracket + 30s Hold Simulation)
+            # 1. Exit Logic
             if self.current_position != 0:
                 self._check_exit(bar)
-                if self.current_position != 0: continue
-
-            # 2. Daily Time Guard (ET Mapping)
-            # Standard Market Hours: 9:30 AM to 4:00 PM ET
-            if timestamp.time() < time(9, 30) or timestamp.time() >= time(16, 0):
-                if self.current_position != 0 and timestamp.time() >= time(16, 55):
+                # EOD Flatten at 15:55 ET
+                if self.current_position != 0 and timestamp.time() >= time(15, 55):
                     self._exit_trade(bar["close"], timestamp, "EOD_FLATTEN")
+                if self.current_position != 0:
+                    continue
+
+            # 2. Time Guard: 9:30 AM to 3:55 PM
+            if timestamp.time() < time(9, 30) or timestamp.time() >= time(15, 55):
                 continue
 
-            # 3. Oracle Compliance Check (Includes Hurst + Trade Cap)
-            # Signal Generation
-            context = day_data.slice(i - 110, 111)
-            signal_prob = self.classifier.predict(context)
-            atr = bar["atr"] if "atr" in bar else settings.REFERENCE_ATR
+            # 3. Oracle Compliance Check
+            signal_prob = self.classifier.predict_features(bar)
+            atr = bar.get("atr", settings.REFERENCE_ATR)
             
-            size = self.allocator.calculate_size(signal_prob, atr, self.state.balance)
+            size = self.allocator.calculate_size(signal_prob, atr, self.state.balance, bar["close"])
 
             if size > 0 and self.oracle.validate_trade(size, bar["close"], "BUY", 
                                              current_hurst=self.current_hurst,
                                              current_time=timestamp.time()):
                 self._enter_trade(size, bar["close"], timestamp, atr)
+
+        if current_date is not None:
+            self._process_eod(current_date)
+
+        return self.get_report()
 
     def _enter_trade(self, size: float, price: float, timestamp: datetime, atr: float):
         self.current_position = size
