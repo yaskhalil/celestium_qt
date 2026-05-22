@@ -45,10 +45,15 @@ class AlpacaClient:
 
     async def get_bars(self, symbol: str, timeframe: str = "5Min", limit: int = 200) -> pl.DataFrame:
         """Fetches historical bars from Alpaca Market Data API v2."""
+        from datetime import timedelta
+        # Default to 5 days ago to ensure we pull enough cross-day bars (110 needed)
+        start_time = (datetime.now(timezone.utc) - timedelta(days=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
         url = f"{self.data_url}/stocks/bars"
         params = {
             "symbols": symbol,
             "timeframe": timeframe,
+            "start": start_time,
             "limit": limit,
             "adjustment": "all",
             "feed": "iex" # Use 'iex' for free tier, 'sip' for paid
