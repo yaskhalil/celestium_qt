@@ -56,6 +56,7 @@ class AlpacaRouter:
             logger.info("Router: Order Placed", order_id=order_id, symbol=symbol, side=side, qty=quantity)
             
             # Send Notification
+            # Note: TP and SL would be fetched from engine state, but we log the fill for now
             await self.notifier.notify_trade(symbol, side, quantity, price, order_id or "N/A")
 
             # Update state with entry time for sell check

@@ -39,16 +39,57 @@ class TelegramNotifier:
         except Exception as e:
             logger.error("Telegram: Failed to send notification", error=str(e))
 
-    async def notify_trade(self, symbol: str, side: str, qty: float, price: float, order_id: str = "N/A"):
+    async def notify_startup(self, balance: float, shadow_mode: bool):
+        """Alerts when bot boots up."""
+        mode = "🟢 LIVE TRADING" if not shadow_mode else "🟡 SHADOW MODE"
+        msg = (
+            f"🚀 *CELESTIUM QT ONLINE*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"*Status:* `{mode}`\n"
+            f"*Starting Balance:* `${balance:.2f}`\n"
+            f"*Target:* `{settings.SYMBOL}`\n"
+            f"*Timeframe:* `5Min`\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"Monitoring market for optimal regime..."
+        )
+        await self.notify(msg)
+
+    async def notify_shutdown(self, balance: float):
+        """Alerts when bot goes offline."""
+        msg = (
+            f"🛑 *CELESTIUM QT OFFLINE*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"*Final Balance:* `${balance:.2f}`\n"
+            f"System safely halted."
+        )
+        await self.notify(msg)
+
+    async def notify_daily_recap(self, pnl: float, balance: float, trades: int):
+        """Sends EOD summary."""
+        emoji = "📈" if pnl >= 0 else "📉"
+        msg = (
+            f"{emoji} *DAILY MARKET CLOSE*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"*Daily PNL:* `${pnl:.2f}`\n"
+            f"*Total Trades:* `{trades}`\n"
+            f"*Ending Balance:* `${balance:.2f}`\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"Awaiting next session..."
+        )
+        await self.notify(msg)
+
+    async def notify_trade(self, symbol: str, side: str, qty: float, price: float, order_id: str = "N/A", tp: float = 0.0, sl: float = 0.0):
         """Specific formatter for trade executions."""
-        emoji = "🚀" if side == "BUY" else "💰"
+        emoji = "🟢" if side == "BUY" else "🔴"
         msg = (
             f"{emoji} *TRADE EXECUTED*\n"
             f"━━━━━━━━━━━━━━━\n"
             f"*Symbol:* `{symbol}`\n"
-            f"*Side:* `{side}`\n"
+            f"*Action:* `{side}`\n"
             f"*Quantity:* `{qty}`\n"
-            f"*Price:* `${price:.2f}`\n"
+            f"*Fill Price:* `${price:.2f}`\n"
+            f"*Take Profit:* `${tp:.2f}`\n"
+            f"*Stop Loss:* `${sl:.2f}`\n"
             f"*Order ID:* `{order_id}`"
         )
         await self.notify(msg)
@@ -56,9 +97,4 @@ class TelegramNotifier:
     async def notify_risk_veto(self, reason: str):
         """Alerts when a trade is blocked by the Oracle."""
         msg = f"🛡 *RISK VETO*\n━━━━━━━━━━━━━━━\n{reason}"
-        await self.notify(msg)
-
-    async def notify_system_status(self, status: str):
-        """Alerts for system events (Start, Stop, Errors)."""
-        msg = f"⚙️ *SYSTEM STATUS*\n━━━━━━━━━━━━━━━\n{status}"
         await self.notify(msg)

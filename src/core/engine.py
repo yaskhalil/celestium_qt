@@ -176,7 +176,7 @@ class ScheduledEngine:
     def start(self):
         """Starts the scheduler with dual-loop configuration."""
         logger.info("Engine: Starting scheduler")
-        asyncio.create_task(self.notifier.notify_system_status("🚀 CelestiumQT Trading Engine Started"))
+        asyncio.create_task(self.notifier.notify_startup(self.account_state.balance, settings.SHADOW_MODE))
         
         # 1. Fast Monitor Loop (Every 1 minute)
         self.scheduler.add_job(
@@ -192,11 +192,18 @@ class ScheduledEngine:
             id='signal_tick'
         )
         
-        # 3. EOD Flatten (4:00 PM ET)
+        # 3. EOD Flatten (3:55 PM ET)
         self.scheduler.add_job(
             self.tick_monitor,
-            CronTrigger(day_of_week='mon-fri', hour='16', minute='0', timezone='America/New_York'),
+            CronTrigger(day_of_week='mon-fri', hour='15', minute='55', timezone='America/New_York'),
             id='market_tick_eod'
+        )
+        
+        # 4. EOD Telegram Recap (4:05 PM ET)
+        self.scheduler.add_job(
+            self.trigger_eod_recap,
+            CronTrigger(day_of_week='mon-fri', hour='16', minute='5', timezone='America/New_York'),
+            id='market_tick_recap'
         )
         
         self.scheduler.start()
@@ -205,7 +212,7 @@ class ScheduledEngine:
     async def stop(self):
         """Stops the scheduler and generates summary."""
         logger.info("Engine: Stopping scheduler")
-        await self.notifier.notify_system_status("🛑 CelestiumQT Trading Engine Stopped")
+        await self.notifier.notify_shutdown(self.account_state.balance)
         self.scheduler.shutdown()
         self.running = False
         
@@ -214,6 +221,17 @@ class ScheduledEngine:
             self.veto_logs, 
             {} # Final metrics context
         )
+
+    async def trigger_eod_recap(self):
+        """Sends daily PNL recap at close."""
+        history = self.account_state.trading_history
+        if not history:
+            await self.notifier.notify_daily_recap(0.0, self.account_state.balance, 0)
+            return
+            
+        today = history[-1]
+        await self.notifier.notify_daily_recap(today.pnl, self.account_state.balance, today.total_trades)
+
 
 if __name__ == "__main__":
     # Scheduler initialization replaced main loop
