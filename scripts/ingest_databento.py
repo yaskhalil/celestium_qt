@@ -19,12 +19,22 @@ def ingest_historical_data(days: int = 365):
 
     client = db.Historical(api_key)
     
-    end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=days)
-    
     # Target dynamic symbol on US Equities dataset
     targets = [settings.SYMBOL]
     dataset = "DBEQ.BASIC"
+
+    try:
+        dataset_range = client.metadata.get_dataset_range(dataset=dataset)
+        available_end_str = dataset_range.get("end")
+        if available_end_str:
+            end_date = datetime.strptime(available_end_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            end_date = datetime.now(timezone.utc)
+    except Exception as e:
+        logger.warning(f"Could not fetch dataset range: {e}")
+        end_date = datetime.now(timezone.utc)
+        
+    start_date = end_date - timedelta(days=days)
 
     for symbol in targets:
         logger.info(f"Databento: Ingesting continuous data for {symbol}", start=start_date.date(), end=end_date.date())
