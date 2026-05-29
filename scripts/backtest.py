@@ -1,5 +1,8 @@
-import polars as pl
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import polars as pl
 import json
 import structlog
 from src.core.backtest_engine import BacktestEngine
