@@ -51,6 +51,8 @@ async def test_engine_tick_success(engine):
     engine.allocator.calculate_size.return_value = 1
     engine.oracle.validate_trade.return_value = True
     
+    engine.alpaca_client.get_last_price = AsyncMock(return_value=15.0)
+    
     engine.router._verify_position = AsyncMock()
     engine.router.current_position = 0
 

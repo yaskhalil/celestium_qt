@@ -13,12 +13,13 @@ class Allocator:
     def __init__(self, max_contracts: int = settings.MAX_POSITION_SIZE_MICRO):
         self.max_contracts = max_contracts
 
-    def calculate_size(self, probability: float, atr: float, balance: float, current_price: float) -> float:
+    def calculate_size(self, probability: float, atr: float, balance: float, current_price: float, daily_pnl: float = 0.0) -> float:
         """
         Calculates optimal contract size based on:
         1. Signal Confidence (XGBoost Probability)
         2. Market Volatility (ATR)
         3. Risk Limits (Dynamic Account Balance)
+        4. Performance Streak (Asymmetric Scaling)
         """
         if probability < settings.SIGNAL_THRESHOLD:
             return 0
@@ -26,8 +27,14 @@ class Allocator:
         # Standard Risk-Based Position Sizing
         base_risk_pct = 0.02  # Target 2% risk of total balance
         
-        # Scale risk by model confidence (prob 0.5 to 1.0 -> scaler 0.0 to 1.0)
-        confidence_scaler = max(0.0, (probability - settings.SIGNAL_THRESHOLD) * 2)
+        # Asymmetric Sizing (Task 4): Protect on losses, push on wins
+        if daily_pnl < 0:
+            base_risk_pct = 0.01  # Halve risk if in drawdown today
+        elif daily_pnl > (balance * 0.01):
+            base_risk_pct = 0.03  # Increase risk if up > 1% today
+            
+        # Scale risk by model confidence (prob threshold to 1.0 -> scaler 0.0 to 1.0)
+        confidence_scaler = max(0.0, (probability - settings.SIGNAL_THRESHOLD) / (1.0 - settings.SIGNAL_THRESHOLD))
         adjusted_risk_pct = base_risk_pct * confidence_scaler
         
         capital_at_risk = balance * adjusted_risk_pct

@@ -64,7 +64,7 @@ class TelegramNotifier:
         )
         await self.notify(msg)
 
-    async def notify_daily_recap(self, pnl: float, balance: float, trades: int):
+    async def notify_daily_recap(self, pnl: float, balance: float, trades: int, vetos: int = 0, payout_capital: float = 0.0):
         """Sends EOD summary."""
         emoji = "📈" if pnl >= 0 else "📉"
         msg = (
@@ -72,6 +72,8 @@ class TelegramNotifier:
             f"━━━━━━━━━━━━━━━\n"
             f"*Daily PNL:* `${pnl:.2f}`\n"
             f"*Total Trades:* `{trades}`\n"
+            f"*Oracle Vetos:* `{vetos}`\n"
+            f"*Liquid Payout Cap:* `${payout_capital:.2f}`\n"
             f"*Ending Balance:* `${balance:.2f}`\n"
             f"━━━━━━━━━━━━━━━\n"
             f"Awaiting next session..."

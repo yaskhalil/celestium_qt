@@ -32,8 +32,30 @@ async def main():
     
     # 2. Load Persistent Account State
     state = AccountState.load()
+
+    # 3. Fetch actual Alpaca Account Balance
+    try:
+        account_info = await alpaca_client.get_account()
+        actual_equity = float(account_info.get("equity", settings.STARTING_BALANCE))
+        actual_cash = float(account_info.get("cash", actual_equity))
+        logger.info("Synced actual balance from Alpaca", equity=actual_equity, cash=actual_cash)
+        
+        # If first time syncing, or starting balance is 0, initialize it
+        if getattr(state, "initial_starting_balance", 0.0) == 0.0:
+            logger.info("Initializing starting balance from Alpaca", balance=actual_equity)
+            state.initial_starting_balance = actual_equity
+            state.balance = actual_equity
+            state.equity = actual_equity
+            state.settled_cash = actual_cash
+            state.save()
+        else:
+            # Continually sync current equity to prevent drift
+            state.balance = actual_equity
+            state.equity = actual_equity
+    except Exception as e:
+        logger.error("Failed to fetch Alpaca account. Using defaults.", error=str(e))
     
-    # 3. Initialize the scheduled engine
+    # 4. Initialize the scheduled engine
     engine = ScheduledEngine(alpaca_client, state)
     engine.start()
     

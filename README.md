@@ -1,18 +1,47 @@
 # CelestiumQT: Hierarchical Systematic Trading Stack
 
 ## Overview
-CelestiumQT is a modular quantitative trading system optimized for high-precision execution. It uses a hierarchical decision stack (Statistical Context -> Signal Generation -> Risk Oracle) to automate trading while strictly adhering to prop firm rules (e.g., Apex/Bulenox).
+CelestiumQT is a modular quantitative trading system optimized for high-precision execution on Cash Accounts (e.g., Alpaca/SPLG/SPY). It uses a hierarchical decision stack:
+1. **Statistical Context:** (Hurst Exponent, ADX, ATR computed over 5-minute bars)
+2. **Signal Generation:** (XGBoost Classifier natively trained on 1-year of S&P 500 history)
+3. **Allocation:** (Dynamic Kelly-like sizing based on Capital-at-Risk / Stop-Loss distance)
+4. **Risk Oracle:** (Deterministic T+1 Cash Settlement firewall to prevent Good Faith Violations)
 
 ---
 
-## Deployment Guide (Digital Ocean Droplet)
+## 🚀 Running the Pipeline Locally
 
-### 1. Prerequisites
-- A Digital Ocean Droplet (Ubuntu 22.04+ recommended).
-- SSH access to the droplet (`ssh root@your_ip`).
-- A private GitHub repository with your code.
+To test the system or retrain the model locally, use the following commands. Ensure you have `DATABENTO_API_KEY` in your `.env` or exported.
 
-### 2. Initial Server Setup
+### 1. Ingest Historical Data
+Fetches 1-year of `ohlcv-1m` SPY data from Databento and resamples it into perfect 5-minute bars.
+```bash
+uv run python3 scripts/ingest_databento.py
+```
+
+### 2. Retrain the Model
+Trains the XGBoost model (`alpha_v1.ubj`) using Walk-Forward Purged Cross-Validation across the historical data.
+```bash
+uv run python3 scripts/train.py
+```
+
+### 3. Run the Backtest
+Runs the full evaluation engine (including the Oracle's T+1 Cash Settlement firewall and the dynamic risk allocator) over the historical data.
+```bash
+uv run python3 scripts/backtest.py
+```
+
+### 4. Open the TUI Dashboard
+Launch the rich Terminal User Interface to monitor signals and live bot status.
+```bash
+uv run python3 scripts/tui.py
+```
+
+---
+
+## ☁️ Deployment Guide (DigitalOcean Droplet)
+
+### 1. Initial Server Setup
 Run these commands on your droplet to prepare the environment:
 ```bash
 # Update system and install dependencies
@@ -32,60 +61,52 @@ cd celestium_qt
 uv sync
 ```
 
-### 3. Configuration (.env)
+### 2. Configuration (`deployment_config.json` & `.env`)
 Create a `.env` file in `/opt/celestium_qt/` to store your private keys:
 ```bash
 ALPACA_API_KEY="your_key"
 ALPACA_SECRET_KEY="your_secret"
 ALPACA_BASE_URL="https://paper-api.alpaca.markets"
-SHADOW_MODE="True"
+DATABENTO_API_KEY="your_db_key"
 ```
+
+*Note: Risk parameters, multipliers, and `shadow_mode` are controlled dynamically via `deployment_config.json`.*
 
 ---
 
-## Service Management
+## 🔄 Updating the Droplet (Handling Git Conflicts)
+
+If you modify the ML model (`alpha_v1.ubj`) locally and push to GitHub, your Droplet might throw a `merge conflict` error when you try to pull, because the Droplet may have generated its own local modifications.
+
+To force the Droplet to flawlessly match your GitHub repository, run this:
+```bash
+cd /opt/celestium_qt
+git fetch origin
+git reset --hard origin/main
+uv sync
+systemctl restart celestium
+```
+*⚠️ **Warning**: `git reset --hard` will overwrite any uncommitted local changes on the Droplet.*
+
+---
+
+## 🛠 Service Management
 
 CelestiumQT runs as a system service (`systemd`), ensuring it starts on boot and restarts automatically if it crashes.
 
-### Basic Commands
 - **Start Bot:** `systemctl start celestium`
 - **Stop Bot:** `systemctl stop celestium`
 - **Restart Bot:** `systemctl restart celestium`
 - **Check Status:** `systemctl status celestium`
 
 ### Monitoring Logs
-To watch the live trading logs and execution:
+To watch the live trading logs and execution decisions in real-time:
 ```bash
 journalctl -u celestium -f
 ```
 
 ---
 
-## Toggling Shadow Mode
-Shadow Mode allows the bot to generate signals and log decisions without sending real orders to the exchange.
-
-1. **Enable Shadow Mode:**
-   - Edit `.env`: `SHADOW_MODE="True"`
-   - Restart: `systemctl restart celestium`
-
-2. **Disable Shadow Mode (Live Trading):**
-   - Edit `.env`: `SHADOW_MODE="False"`
-   - Restart: `systemctl restart celestium`
-
----
-
-## Updating the Droplet
-When you push new code to GitHub, update your droplet with these commands:
-```bash
-cd /opt/celestium_qt
-git pull origin main
-uv sync
-systemctl restart celestium
-```
-
----
-
-## Troubleshooting
-- **Missing Timezone:** If the bot fails with a `ZoneInfoNotFoundError`, ensure the `tzdata` Python package is installed (`pip install tzdata` or `uv sync`). On some Linux systems, you may also need `apt install tzdata`.
-- **Model Missing:** If `models/alpha_v1.ubj` is not found, run `uv run python3 scripts/train.py` to generate the trading model.
-- **Shadow Mode:** Use `SHADOW_MODE="True"` to test with Alpaca Paper Trading without risking real capital.
+## 🧠 Architecture Notes (2026 Build)
+- **T+1 Oracle Firewall:** The system accurately tracks unsettled funds. Because SPY volatility is low, the Dynamic Allocator will naturally maximize your Buying Power to meet its 2% Risk Target. The Oracle correctly intercepts this and restricts trading to exactly ~1 trade per day to prevent Good Faith Violations (GFVs).
+- **5-Minute Shift:** The pipeline was explicitly upgraded from 1-minute to 5-minute bars to eliminate market micro-noise and heavily increase the baseline win rate.

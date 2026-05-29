@@ -73,5 +73,13 @@ class DuckDBStorage:
             logger.error("DuckDB: Fetch failed", error=str(e))
             return pl.DataFrame()
 
+    def vacuum(self):
+        """Reclaims space and optimizes indexes."""
+        try:
+            self.conn.execute("VACUUM ANALYZE;")
+            logger.info("DuckDB: VACUUM successful")
+        except Exception as e:
+            logger.error("DuckDB: VACUUM failed", error=str(e))
+
     def close(self):
         self.conn.close()

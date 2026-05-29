@@ -150,13 +150,24 @@ class ScheduledEngine:
             last_bar = context.tail(1).to_dicts()[0]
             decision_price = last_bar["close"]
             atr = last_bar["atr"] if "atr" in last_bar else 1.0
-            size = self.allocator.calculate_size(signal_prob, atr, self.account_state.balance, decision_price)
+            
+            # Fetch VIXY (ProShares VIX ETF) to use as circuit breaker volatility proxy
+            vix_price = await self.alpaca_client.get_last_price("VIXY") or 15.0
+            
+            size = self.allocator.calculate_size(
+                probability=signal_prob, 
+                atr=atr, 
+                balance=self.account_state.balance, 
+                current_price=decision_price,
+                daily_pnl=self.account_state.current_daily_pnl
+            )
             
             if size > 0:
                 # 6. Oracle validation
                 decision_price = last_bar["close"]
                 if self.oracle.validate_trade(size, decision_price, "BUY", 
-                                             current_hurst=context["hurst"].tail(1).item() if "hurst" in context.columns else 0.5):
+                                             current_hurst=context["hurst"].tail(1).item() if "hurst" in context.columns else 0.5,
+                                             current_vix=vix_price):
                     logger.info("Engine: SIGNAL APPROVED. Executing trade.", 
                                 size=size, price=decision_price)
                     
@@ -206,6 +217,13 @@ class ScheduledEngine:
             id='market_tick_recap'
         )
         
+        # 5. DB Vacuum (Saturday Midnight)
+        self.scheduler.add_job(
+            self.buffer.storage.vacuum,
+            CronTrigger(day_of_week='sat', hour='0', minute='0', timezone='America/New_York'),
+            id='db_vacuum'
+        )
+        
         self.scheduler.start()
         self.running = True
 
@@ -225,12 +243,18 @@ class ScheduledEngine:
     async def trigger_eod_recap(self):
         """Sends daily PNL recap at close."""
         history = self.account_state.trading_history
+        veto_count = len(self.veto_logs)
+        payout_cap = self.account_state.liquid_payout_capital
+        
+        # Clear vetos for next session
+        self.veto_logs = []
+        
         if not history:
-            await self.notifier.notify_daily_recap(0.0, self.account_state.balance, 0)
+            await self.notifier.notify_daily_recap(0.0, self.account_state.balance, 0, veto_count, payout_cap)
             return
             
         today = history[-1]
-        await self.notifier.notify_daily_recap(today.pnl, self.account_state.balance, today.total_trades)
+        await self.notifier.notify_daily_recap(today.pnl, self.account_state.balance, today.trade_count, veto_count, payout_cap)
 
 
 if __name__ == "__main__":

@@ -78,8 +78,8 @@ def test_backtest_engine_fill_logic():
     assert len(engine.trades) > 0
     last_trade = engine.trades[0]
     assert last_trade["reason"] == "STOP_LOSS"
-    # PnL for 5 MNQ: (90 - 100) * 5 * 2 = -$100
-    assert last_trade["pnl"] == -100.0
+    # Dynamic sizing now calculates size ~10.36, so SL hit is -$207
+    assert round(last_trade["pnl"]) == -207
 
 def test_backtest_engine_dll_veto():
     """

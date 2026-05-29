@@ -27,6 +27,7 @@ class DailySession(BaseModel):
 class AccountState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
+    initial_starting_balance: float = 0.0
     balance: float = Field(default_factory=lambda: settings.STARTING_BALANCE)
     equity: float = Field(default_factory=lambda: settings.STARTING_BALANCE)
     settled_cash: float = 0.0
@@ -57,7 +58,8 @@ class AccountState(BaseModel):
 
     @property
     def liquid_payout_capital(self) -> float:
-        return max(0.0, self.equity - (settings.STARTING_BALANCE + self.reserve_threshold))
+        base = self.initial_starting_balance if self.initial_starting_balance > 0 else settings.STARTING_BALANCE
+        return max(0.0, self.equity - (base + self.reserve_threshold))
 
     def is_trading_allowed(self, current_time: Optional[time] = None) -> bool:
         # Note: Bulenox times are ET, Rithmic uses UTC. 
@@ -95,6 +97,7 @@ class Oracle:
 
     def validate_trade(self, quantity: float, price: float, side: str, 
                        current_hurst: float = 0.0, 
+                       current_vix: float = 0.0,
                        current_time: Optional[time] = None) -> bool:
         """Enforces Hardened Evaluator Rules: DLL, Daily Cap, Trade Cap, Hurst."""
         
@@ -112,7 +115,14 @@ class Oracle:
             logger.debug("VETO: Hurst below threshold", hurst=current_hurst, min=self.state.hurst_threshold)
             return False
 
-        # 3. DLL and Profit Ceiling
+        # 3. Circuit Breaker (Flash Crash / Panic Protection)
+        # Assuming VIXY ETF as proxy for VIX if VIX index isn't available. VIXY > 25 means high panic.
+        if current_vix > 25.0:
+            logger.warning("VETO: CIRCUIT BREAKER ACTIVE - High Volatility Detected", vix=current_vix)
+            self._safe_notify("⚡️ *CIRCUIT BREAKER ACTIVE* - Market Panic Detected (VIXY > 25). Engine Paused.")
+            return False
+
+        # 4. DLL and Profit Ceiling
         if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS
             self.state.save()
@@ -125,13 +135,13 @@ class Oracle:
             self._safe_notify("✅ Daily Profit Ceiling Reached - Session Closed")
             return False
 
-        # 4. EOD Floor
+        # 5. EOD Floor
         if self.state.balance <= self.state.safety_net_floor:
             logger.error("VETO: Floor Breached")
             self._safe_notify("🚨 ACCOUNT FLOOR BREACHED")
             return False
 
-        # 5. GFV Protection (T+1 Settlement for $400 Equity Account)
+        # 6. GFV Protection (T+1 Settlement for $400 Equity Account)
         if side == "BUY":
             cost = quantity * price
             if cost > self.state.settled_cash:
