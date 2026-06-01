@@ -515,8 +515,15 @@ class ScheduledEngine:
             
             data_path = f"data/processed/databento_{settings.SYMBOL.lower()}.parquet"
             if not os.path.exists(data_path):
-                await self.notifier.notify("⚠️ *Backtest Failed:* Historical data parquet not found. Please run historical data ingestion first.")
-                return
+                await self.notifier.notify(f"📥 *Parquet Data Not Found:* Automatically launching Databento historical data ingestion for {settings.SYMBOL} (365 days)...")
+                from scripts.ingest_databento import ingest_historical_data
+                await asyncio.to_thread(ingest_historical_data, 365)
+                
+                if not os.path.exists(data_path):
+                    await self.notifier.notify("❌ *Ingestion Failed:* Parquet data file could not be created. Please check your DATABENTO_API_KEY.")
+                    return
+                else:
+                    await self.notifier.notify("✅ *Ingestion/Resampling Successful:* Proceeding with the backtest...")
                 
             def _execute():
                 df = pl.read_parquet(data_path)

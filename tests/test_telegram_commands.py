@@ -148,3 +148,40 @@ async def test_cmd_backtest(engine):
     engine.notifier.notify.assert_any_call("⏳ *STARTING BACKTEST* - Loading S&P 500 data and running 1-year historical simulation...")
     mock_run.assert_called_once()
 
+@pytest.mark.asyncio
+async def test_run_telegram_backtest_with_missing_parquet(engine):
+    # We patch exists to return False first (missing parquet), then True (ingestion succeeds)
+    exists_calls = [False, True]
+    def mock_exists(path):
+        if "databento" in path:
+            return exists_calls.pop(0) if exists_calls else True
+        return True
+
+    mock_report = {"Total Net Profit": 10.0, "Win Rate": 0.5, "Total Trades": 10}
+
+    with patch("os.path.exists", side_effect=mock_exists), \
+         patch("polars.read_parquet"), \
+         patch("src.core.backtest_engine.BacktestEngine") as mock_bt_engine_cls, \
+         patch("src.features.regime.add_regime_features"), \
+         patch("scripts.ingest_databento.ingest_historical_data") as mock_ingest:
+        
+        # Setup mock BacktestEngine run result
+        mock_bt_engine = MagicMock()
+        mock_bt_engine.run.return_value = mock_report
+        mock_bt_engine_cls.return_value = mock_bt_engine
+        
+        await engine.run_telegram_backtest()
+        
+        # Verify it launched ingestion
+        mock_ingest.assert_called_once_with(365)
+        
+        # Verify it notified about missing parquet, successful ingestion, and results
+        engine.notifier.notify.assert_any_call("📥 *Parquet Data Not Found:* Automatically launching Databento historical data ingestion for SPLG (365 days)...")
+        engine.notifier.notify.assert_any_call("✅ *Ingestion/Resampling Successful:* Proceeding with the backtest...")
+        
+        # Verify final results message contains expected fields
+        final_msg = engine.notifier.notify.call_args_list[-1][0][0]
+        assert "HISTORICAL BACKTEST RESULTS" in final_msg
+        assert "$10.00" in final_msg
+        assert "50.0%" in final_msg
+
