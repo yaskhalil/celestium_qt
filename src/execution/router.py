@@ -26,7 +26,7 @@ class AlpacaRouter:
         except Exception as e:
             logger.error("Router: Position Verification Error", error=str(e))
 
-    async def execute_trade(self, symbol: str, quantity: float, side: str, price: float):
+    async def execute_trade(self, symbol: str, quantity: float, side: str, price: float, tp: float = 0.0, sl: float = 0.0):
         """Executes a trade via Alpaca API."""
         await self._verify_position(symbol)
 
@@ -41,6 +41,8 @@ class AlpacaRouter:
         
         if settings.SHADOW_MODE:
             logger.info("Router: SHADOW MODE - Order would be placed", symbol=symbol, side=side, qty=quantity, price=price)
+            # Send Notification for Shadow Mode as well
+            await self.notifier.notify_trade(symbol, side, quantity, price, "shadow_order_id", tp=tp, sl=sl)
             return "shadow_order_id"
 
         try:
@@ -56,8 +58,7 @@ class AlpacaRouter:
             logger.info("Router: Order Placed", order_id=order_id, symbol=symbol, side=side, qty=quantity)
             
             # Send Notification
-            # Note: TP and SL would be fetched from engine state, but we log the fill for now
-            await self.notifier.notify_trade(symbol, side, quantity, price, order_id or "N/A")
+            await self.notifier.notify_trade(symbol, side, quantity, price, order_id or "N/A", tp=tp, sl=sl)
 
             # Update state with entry time for sell check
             if side == "BUY":

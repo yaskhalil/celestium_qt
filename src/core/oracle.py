@@ -17,6 +17,7 @@ class AccountStatus(str, Enum):
     PAUSED_DAILY_LOSS = "paused_daily_loss"
     FLATTENING_REQUIRED = "flattening_required"
     LIQUIDATED = "liquidated"
+    PAUSED = "paused"
 
 class DailySession(BaseModel):
     date: datetime

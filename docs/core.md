@@ -30,3 +30,12 @@ Handles business logic, risk firewall, state machine.
 
 ### `notifier.py`
 - Telegram alerts -> Risk vetoes, session close.
+- Interactive Telegram Controller:
+  - Background polling loop in `engine.py` listens to user inputs from the configured Telegram chat.
+  - `/status` - Retrieve system status, mode, balance, equity, daily PNL, positions, and vetoes count.
+  - `/pause` - Manually pause Oracle trading to veto new signals.
+  - `/resume` - Manually resume Oracle trading.
+  - `/positions` - View active position sizes, entry price, stop loss, and take profit.
+  - `/vetoes` - View list of Oracle veto logs for today.
+  - `/performance` - View model details, historical backtest report, and live session performance stats.
+  - `/help` - Show the interactive help menu.

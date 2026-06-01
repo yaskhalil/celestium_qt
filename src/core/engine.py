@@ -4,9 +4,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import asyncio
 
+import httpx
+import json
+import os
 from src.config import settings
 from src.data.pipeline import DuckDBBuffer
-from src.core.oracle import Oracle, AccountState
+from src.core.oracle import Oracle, AccountState, AccountStatus
 from src.core.boolean_network import BooleanStateSpace
 from src.execution.router import AlpacaRouter
 from src.models.classifier import Classifier
@@ -43,6 +46,7 @@ class ScheduledEngine:
         self.scheduler = AsyncIOScheduler()
         self.running = False
         self.veto_logs = []
+        self.telegram_listener_task = None
         
         # Live Trade Monitoring
         self.current_symbol = settings.SYMBOL
@@ -170,13 +174,12 @@ class ScheduledEngine:
                                              current_vix=vix_price):
                     logger.info("Engine: SIGNAL APPROVED. Executing trade.", 
                                 size=size, price=decision_price)
-                    
                     # Calculate targets (ATR-based)
                     self.entry_price = decision_price
                     self.take_profit = decision_price + (atr * settings.PT_MULTIPLIER)
                     self.stop_loss = decision_price - (atr * settings.SL_MULTIPLIER)
 
-                    await self.router.execute_trade(symbol, size, "BUY", price=decision_price)
+                    await self.router.execute_trade(symbol, size, "BUY", price=decision_price, tp=self.take_profit, sl=self.stop_loss)
                     self.oracle.update_session(cash_flow=size * decision_price, quantity=size, side="BUY")
                 else:
                     self.veto_logs.append(f"Oracle vetoed: prob {signal_prob}")
@@ -187,7 +190,11 @@ class ScheduledEngine:
     def start(self):
         """Starts the scheduler with dual-loop configuration."""
         logger.info("Engine: Starting scheduler")
+        self.running = True
         asyncio.create_task(self.notifier.notify_startup(self.account_state.balance, settings.SHADOW_MODE))
+        
+        # Start Telegram Command Listener loop in background
+        self.telegram_listener_task = asyncio.create_task(self.poll_telegram_updates())
         
         # 1. Fast Monitor Loop (Every 1 minute)
         self.scheduler.add_job(
@@ -225,20 +232,231 @@ class ScheduledEngine:
         )
         
         self.scheduler.start()
-        self.running = True
 
     async def stop(self):
         """Stops the scheduler and generates summary."""
         logger.info("Engine: Stopping scheduler")
+        self.running = False
+        
+        # Cancel Telegram Command Listener loop
+        if self.telegram_listener_task:
+            self.telegram_listener_task.cancel()
+            try:
+                await self.telegram_listener_task
+            except asyncio.CancelledError:
+                pass
+        
         await self.notifier.notify_shutdown(self.account_state.balance)
         self.scheduler.shutdown()
-        self.running = False
         
         await self.advisor.generate_summary(
             self.account_state, 
             self.veto_logs, 
             {} # Final metrics context
         )
+
+    async def poll_telegram_updates(self):
+        """Polls Telegram for commands in the background."""
+        if not settings.TELEGRAM_ENABLED or not settings.TELEGRAM_BOT_TOKEN:
+            return
+
+        token = settings.TELEGRAM_BOT_TOKEN
+        chat_id = str(settings.TELEGRAM_CHAT_ID)
+        base_url = f"https://api.telegram.org/bot{token}"
+        offset = 0
+        
+        # Clear old updates on start
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(f"{base_url}/getUpdates", params={"offset": -1, "timeout": 1})
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("ok") and data.get("result"):
+                        offset = data["result"][-1]["update_id"] + 1
+        except Exception as e:
+            logger.error("Telegram Listener: Failed to clear initial updates", error=str(e))
+
+        logger.info("Telegram Listener: Started polling updates", offset=offset)
+
+        while self.running:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"{base_url}/getUpdates",
+                        params={"offset": offset, "timeout": 10},
+                        timeout=15.0
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("ok") and data.get("result"):
+                            for update in data["result"]:
+                                offset = update["update_id"] + 1
+                                message = update.get("message")
+                                if not message:
+                                    continue
+                                
+                                msg_chat_id = str(message.get("chat", {}).get("id", ""))
+                                if chat_id and msg_chat_id != chat_id:
+                                    continue
+                                    
+                                text = message.get("text", "").strip()
+                                if text.startswith("/"):
+                                    await self.process_telegram_command(text)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Telegram Listener: Polling error", error=str(e))
+                await asyncio.sleep(5)
+            await asyncio.sleep(1)
+
+    async def process_telegram_command(self, command: str):
+        """Processes received Telegram commands."""
+        parts = command.split()
+        if not parts:
+            return
+        cmd = parts[0].lower().split('@')[0]
+        
+        if cmd == "/help":
+            help_msg = (
+                "🤖 *CelestiumQT Commands:*\n"
+                "━━━━━━━━━━━━━━━\n"
+                "• `/status` - Current balance, daily PNL, position, and system status\n"
+                "• `/pause` - Manually pause Oracle trading\n"
+                "• `/resume` - Manually resume Oracle trading\n"
+                "• `/positions` - View current open positions\n"
+                "• `/vetoes` - View Oracle veto logs for today\n"
+                "• `/performance` - View model & trading performance statistics\n"
+                "• `/help` - Show this help menu"
+            )
+            await self.notifier.notify(help_msg)
+            
+        elif cmd == "/performance":
+            backtest_data = {}
+            if os.path.exists("data/backtest_report.json"):
+                try:
+                    with open("data/backtest_report.json", "r") as f:
+                        backtest_data = json.load(f)
+                except Exception as e:
+                    logger.error("Telegram performance: Failed to load backtest report", error=str(e))
+
+            history = self.account_state.trading_history
+            total_sessions = len(history)
+            net_pnl = sum(s.pnl for s in history)
+            win_days = len([s for s in history if s.pnl > 0])
+            loss_days = len([s for s in history if s.pnl < 0])
+            avg_pnl = net_pnl / total_sessions if total_sessions > 0 else 0.0
+            win_rate_days = (win_days / total_sessions * 100.0) if total_sessions > 0 else 0.0
+            
+            model_size_mb = 0.0
+            model_path = getattr(self.classifier, 'model_path', 'models/alpha_v1.ubj')
+            if os.path.exists(model_path):
+                model_size_mb = os.path.getsize(model_path) / (1024 * 1024)
+
+            msg = (
+                f"📊 *MODEL & TRADING PERFORMANCE*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"🧠 *Model Architecture:*\n"
+                f"• *Model File:* `{os.path.basename(model_path)}`\n"
+                f"• *Size:* `{model_size_mb:.2f} MB`\n"
+                f"• *Classifier:* `XGBoost (Layer 2)`\n"
+                f"• *Signal Threshold:* `{settings.SIGNAL_THRESHOLD}`\n"
+                f"━━━━━━━━━━━━━━━\n"
+            )
+            
+            if backtest_data:
+                bt_win_rate = backtest_data.get("Win Rate", 0.0) * 100.0
+                msg += (
+                    f"🔬 *Historical Backtest (1-Year SPY):*\n"
+                    f"• *Total Trades:* `{backtest_data.get('Total Trades', 0)}`\n"
+                    f"• *Model Win Rate:* `{bt_win_rate:.1f}%`\n"
+                    f"• *Net Profit:* `${backtest_data.get('Total Net Profit', 0.0):.2f}`\n"
+                    f"• *Max Drawdown:* `${backtest_data.get('Max Drawdown', 0.0):.2f}`\n"
+                    f"• *Recovery Factor:* `{backtest_data.get('Recovery Factor', 0.0):.2f}`\n"
+                    f"• *Consistency Score:* `{backtest_data.get('Consistency Score', 0.0):.3f}`\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                )
+            else:
+                msg += "🔬 *Historical Backtest:* `No backtest report found` (Run backtest script to generate)\n━━━━━━━━━━━━━━━\n"
+                
+            msg += (
+                f"🟢 *Live Session Performance:*\n"
+                f"• *Total Trading Days:* `{total_sessions}`\n"
+                f"• *Net PNL:* `${net_pnl:.2f}`\n"
+                f"• *Win Days:* `{win_days}` ({win_rate_days:.1f}%)\n"
+                f"• *Loss Days:* `{loss_days}`\n"
+                f"• *Avg Daily PNL:* `${avg_pnl:.2f}`"
+            )
+            await self.notifier.notify(msg)
+            
+        elif cmd == "/status":
+            await self.router._verify_position(self.current_symbol)
+            pos = self.router.current_position
+            mode = "SHADOW MODE" if settings.SHADOW_MODE else "LIVE TRADING"
+            status_emoji = "🟢" if self.account_state.status == AccountStatus.ACTIVE else "🔴"
+            
+            status_msg = (
+                f"📊 *SYSTEM STATUS*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"*Status:* `{self.account_state.status.value.upper()}` {status_emoji}\n"
+                f"*Execution Mode:* `{mode}`\n"
+                f"*Balance:* `${self.account_state.balance:.2f}`\n"
+                f"*Equity:* `${self.account_state.equity:.2f}`\n"
+                f"*Daily PNL:* `${self.account_state.current_daily_pnl:.2f}`\n"
+                f"*Open Position:* `{pos}` shares\n"
+                f"*Target Symbol:* `{self.current_symbol}`\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"*Settled Cash:* `${self.account_state.settled_cash:.2f}`\n"
+                f"*Unsettled Cash:* `${self.account_state.unsettled_cash:.2f}`\n"
+                f"*Oracle Vetos Today:* `{len(self.veto_logs)}`"
+            )
+            await self.notifier.notify(status_msg)
+            
+        elif cmd == "/pause":
+            if self.account_state.status == AccountStatus.ACTIVE:
+                self.account_state.status = AccountStatus.PAUSED
+                self.account_state.save()
+                await self.notifier.notify("⏸ *SYSTEM PAUSED* - Oracle has been manually paused. New signals will be vetoed.")
+                logger.info("Telegram: System manually paused")
+            else:
+                await self.notifier.notify(f"⚠️ Bot is already in `{self.account_state.status.value}` state.")
+                
+        elif cmd == "/resume":
+            if self.account_state.status == AccountStatus.PAUSED:
+                self.account_state.status = AccountStatus.ACTIVE
+                self.account_state.save()
+                await self.notifier.notify("▶️ *SYSTEM RESUMED* - Oracle is now active and monitoring signals.")
+                logger.info("Telegram: System manually resumed")
+            else:
+                await self.notifier.notify(f"⚠️ Cannot resume from state `{self.account_state.status.value}`. Only manually paused bots can be resumed.")
+                
+        elif cmd == "/positions":
+            await self.router._verify_position(self.current_symbol)
+            pos = self.router.current_position
+            if pos == 0:
+                await self.notifier.notify("📦 *POSITIONS*\nNo active positions.")
+            else:
+                side = "LONG" if pos > 0 else "SHORT"
+                pos_msg = (
+                    f"📦 *OPEN POSITION*\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"*Symbol:* `{self.current_symbol}`\n"
+                    f"*Direction:* `{side}`\n"
+                    f"*Size:* `{abs(pos)}` shares\n"
+                    f"*Entry Price:* `${self.entry_price:.2f}`\n"
+                    f"*Stop Loss:* `${self.stop_loss:.2f}`\n"
+                    f"*Take Profit:* `${self.take_profit:.2f}`"
+                )
+                await self.notifier.notify(pos_msg)
+                
+        elif cmd == "/vetoes":
+            if not self.veto_logs:
+                await self.notifier.notify("🛡 *ORACLE VETOES*\nNo vetoes recorded today.")
+            else:
+                veto_list = "\n".join([f"• {log}" for log in self.veto_logs])
+                await self.notifier.notify(f"🛡 *ORACLE VETOES TODAY*\n━━━━━━━━━━━━━━━\n{veto_list}")
+                
+        else:
+            await self.notifier.notify("❓ Unknown command. Type `/help` for available commands.")
 
     async def trigger_eod_recap(self):
         """Sends daily PNL recap at close."""
