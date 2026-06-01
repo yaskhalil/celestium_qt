@@ -11,7 +11,7 @@
     "commission_per_lot": 0.0,
     "pt_multiplier": 1.5,
     "sl_multiplier": 0.75,
-    "shadow_mode": true,
+    "shadow_mode": false,
     "symbol": "SPLG",
     "exchange": "NASD",
     "hurst_threshold": 0.45,
