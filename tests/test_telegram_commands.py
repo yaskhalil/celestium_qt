@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 from src.core.engine import ScheduledEngine
 from src.core.oracle import AccountStatus, AccountState
+from src.config import settings
 
 @pytest.fixture
 def mock_alpaca_client():
@@ -115,4 +116,35 @@ async def test_cmd_performance_with_backtest(engine):
         assert "Historical Backtest (1-Year SPY)" in args[0]
         assert "55.0%" in args[0]
         assert "100" in args[0]
+
+@pytest.mark.asyncio
+async def test_cmd_shadow(engine):
+    # Test setting shadow mode on
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data='{"shadow_mode": false}')):
+        await engine.process_telegram_command("/shadow on")
+        assert settings.SHADOW_MODE is True
+        engine.notifier.notify.assert_called_once()
+        assert "SHADOW MODE" in engine.notifier.notify.call_args[0][0]
+        
+    # Test setting shadow mode off
+    engine.notifier.notify.reset_mock()
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data='{"shadow_mode": true}')):
+        await engine.process_telegram_command("/shadow off")
+        assert settings.SHADOW_MODE is False
+        engine.notifier.notify.assert_called_once()
+        assert "LIVE TRADING" in engine.notifier.notify.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_cmd_backtest(engine):
+    # Mocking the background run method
+    mock_run = AsyncMock()
+    engine.run_telegram_backtest = mock_run
+    
+    await engine.process_telegram_command("/backtest")
+    
+    # Assert initial start message was sent
+    engine.notifier.notify.assert_any_call("⏳ *STARTING BACKTEST* - Loading S&P 500 data and running 1-year historical simulation...")
+    mock_run.assert_called_once()
 

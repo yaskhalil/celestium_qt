@@ -326,9 +326,57 @@ class ScheduledEngine:
                 "• `/positions` - View current open positions\n"
                 "• `/vetoes` - View Oracle veto logs for today\n"
                 "• `/performance` - View model & trading performance statistics\n"
+                "• `/shadow [on/off]` - Toggle or set Shadow Mode execution\n"
+                "• `/backtest` - Run 1-year historical simulation\n"
                 "• `/help` - Show this help menu"
             )
             await self.notifier.notify(help_msg)
+            
+        elif cmd == "/shadow":
+            # Determine target state
+            args = parts[1:]
+            current_shadow = settings.SHADOW_MODE
+            
+            if args:
+                target = args[0].lower()
+                if target in ["on", "true", "1"]:
+                    new_shadow = True
+                elif target in ["off", "false", "0"]:
+                    new_shadow = False
+                else:
+                    await self.notifier.notify("⚠️ Invalid argument. Use `/shadow on` or `/shadow off`.")
+                    return
+            else:
+                new_shadow = not current_shadow
+                
+            # Update settings in memory
+            settings.SHADOW_MODE = new_shadow
+            
+            # Save override to deployment_config.json
+            config_path = "deployment_config.json"
+            config_data = {}
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, "r") as f:
+                        config_data = json.load(f)
+                except Exception as e:
+                    logger.error("Telegram shadow: Failed to load config to save", error=str(e))
+            
+            config_data["shadow_mode"] = new_shadow
+            
+            try:
+                with open(config_path, "w") as f:
+                    json.dump(config_data, f, indent=4)
+            except Exception as e:
+                logger.error("Telegram shadow: Failed to save config to disk", error=str(e))
+                
+            state_str = "🟡 SHADOW MODE (Simulated)" if new_shadow else "🟢 LIVE TRADING (Alpaca)"
+            await self.notifier.notify(f"🔄 *EXECUTION MODE UPDATED*\nSystem is now in `{state_str}`.")
+            logger.info("Telegram: Shadow mode updated", shadow_mode=new_shadow)
+            
+        elif cmd == "/backtest":
+            await self.notifier.notify("⏳ *STARTING BACKTEST* - Loading S&P 500 data and running 1-year historical simulation...")
+            asyncio.create_task(self.run_telegram_backtest())
             
         elif cmd == "/performance":
             backtest_data = {}
@@ -457,6 +505,52 @@ class ScheduledEngine:
                 
         else:
             await self.notifier.notify("❓ Unknown command. Type `/help` for available commands.")
+
+    async def run_telegram_backtest(self):
+        """Runs the historical backtest in a background thread and reports results."""
+        try:
+            import polars as pl
+            from src.core.backtest_engine import BacktestEngine
+            from src.features.regime import add_regime_features
+            
+            data_path = f"data/processed/databento_{settings.SYMBOL.lower()}.parquet"
+            if not os.path.exists(data_path):
+                await self.notifier.notify("⚠️ *Backtest Failed:* Historical data parquet not found. Please run historical data ingestion first.")
+                return
+                
+            def _execute():
+                df = pl.read_parquet(data_path)
+                if "atr" not in df.columns:
+                    df = add_regime_features(df)
+                
+                old_thresh = settings.SIGNAL_THRESHOLD
+                settings.SIGNAL_THRESHOLD = 0.5
+                try:
+                    engine = BacktestEngine()
+                    report = engine.run(df)
+                    return report
+                finally:
+                    settings.SIGNAL_THRESHOLD = old_thresh
+                    
+            report = await asyncio.to_thread(_execute)
+            
+            win_rate = report.get("Win Rate", 0.0) * 100.0
+            msg = (
+                f"🔬 *HISTORICAL BACKTEST RESULTS*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"• *Target Symbol:* `{settings.SYMBOL}`\n"
+                f"• *Total Trades:* `{report.get('Total Trades', 0)}`\n"
+                f"• *Model Win Rate:* `{win_rate:.1f}%`\n"
+                f"• *Net Profit:* `${report.get('Total Net Profit', 0.0):.2f}`\n"
+                f"• *Max Drawdown:* `${report.get('Max Drawdown', 0.0):.2f}`\n"
+                f"• *Recovery Factor:* `{report.get('Recovery Factor', 0.0):.2f}`\n"
+                f"• *Consistency Score:* `{report.get('Consistency Score', 0.0):.3f}`\n"
+                f"• *Qualifying Days:* `{report.get('Qualifying Day Count', 0)}`"
+            )
+            await self.notifier.notify(msg)
+        except Exception as e:
+            logger.error("Telegram backtest run failed", error=str(e))
+            await self.notifier.notify(f"❌ *Backtest Failed:* {str(e)}")
 
     async def trigger_eod_recap(self):
         """Sends daily PNL recap at close."""
