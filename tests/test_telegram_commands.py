@@ -176,7 +176,7 @@ async def test_run_telegram_backtest_with_missing_parquet(engine):
         mock_ingest.assert_called_once_with(365)
         
         # Verify it notified about missing parquet, successful ingestion, and results
-        engine.notifier.notify.assert_any_call("📥 *Parquet Data Not Found:* Automatically launching Databento historical data ingestion for SPLG (365 days)...")
+        engine.notifier.notify.assert_any_call(f"📥 *Parquet Data Not Found:* Automatically launching Databento historical data ingestion for {settings.SYMBOL} (365 days)...")
         engine.notifier.notify.assert_any_call("✅ *Ingestion/Resampling Successful:* Proceeding with the backtest...")
         
         # Verify final results message contains expected fields

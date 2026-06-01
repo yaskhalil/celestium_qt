@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     ALPACA_BASE_URL: str = Field(default="https://paper-api.alpaca.markets", alias="ALPACA_BASE_URL")
 
     # Trading Target
-    SYMBOL: str = "SPLG"
+    SYMBOL: str = "SPYM"
     CONTEXT_SYMBOL: str = "QQQ"
     EXCHANGE: str = "NASD"
     
