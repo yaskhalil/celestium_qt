@@ -37,10 +37,13 @@ class AlpacaClient:
                 headers=self.headers,
                 timeout=10.0
             )
-            if response.status_code != 200:
+            if not response.is_success:
                 if response.status_code not in ignore_status:
                     logger.error("Alpaca API Error", status=response.status_code, text=response.text, url=url)
                 response.raise_for_status()
+            
+            if response.status_code == 204:
+                return {}
             return response.json()
 
     async def get_bars(self, symbol: str, timeframe: str = "5Min", limit: int = 200) -> pl.DataFrame:
