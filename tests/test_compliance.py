@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, AsyncMock, patch
-from src.execution.router import AlpacaRouter
+from src.execution.position_manager import PositionManager
 from src.core.oracle import AccountState, AccountStatus, Oracle
 from src.config import settings
 
@@ -13,7 +13,7 @@ async def test_30s_hold_time_enforcement():
     """
     # Mock Alpaca Client
     mock_client = MagicMock()
-    mock_client.place_order = AsyncMock()
+    mock_client.place_order = AsyncMock(return_value={"id": "test_order_id"})
     mock_client.get_position = AsyncMock()
     
     # Setup State
@@ -26,7 +26,8 @@ async def test_30s_hold_time_enforcement():
         daily_profit_ceiling=1200.0
     )
     
-    router = AlpacaRouter(mock_client, state)
+    oracle = Oracle(state)
+    router = PositionManager(mock_client, state, oracle)
     
     # 1. Enter Trade
     # Simulate being in a trade

@@ -92,9 +92,9 @@ class AccountState(BaseModel):
 class Oracle:
     """The Risk Firewall (Bulenox 50K EOD - 2026 Edition)"""
     
-    def __init__(self, state: AccountState):
+    def __init__(self, state: AccountState, notifier: Optional[TelegramNotifier] = None):
         self.state = state
-        self.notifier = TelegramNotifier()
+        self.notifier = notifier or TelegramNotifier()
 
     def validate_trade(self, quantity: float, price: float, side: str, 
                        current_hurst: float = 0.0, 

@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `src/core/oracle.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 Create a test that initializes `AccountState` and checks for `settled_cash` and `unsettled_cash` fields.
 
 ```python
@@ -27,11 +27,11 @@ def test_account_state_cash_fields():
     assert state.settled_cash == 400.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 Run: `pytest tests/test_oracle.py -v`
 Expected: FAIL (AttributeError)
 
-- [ ] **Step 3: Update `AccountState`**
+- [x] **Step 3: Update `AccountState`**
 Add fields and a validator to ensure `settled_cash` defaults to `balance`.
 
 ```python
@@ -49,10 +49,10 @@ class AccountState(BaseModel):
         return self
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 Run: `pytest tests/test_oracle.py -v`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add src/core/oracle.py
 git commit -m "feat(oracle): add settled and unsettled cash to AccountState"
@@ -64,7 +64,7 @@ git commit -m "feat(oracle): add settled and unsettled cash to AccountState"
 - Modify: `src/core/oracle.py`
 - Test: `tests/test_oracle.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 Create a test case where a BUY order is vetoed because it exceeds `settled_cash`.
 
 ```python
@@ -75,10 +75,10 @@ def test_gfv_prevention():
     assert oracle.validate_trade(1, 150.0, "BUY") is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 Run: `pytest tests/test_oracle.py -v`
 
-- [ ] **Step 3: Update `validate_trade`**
+- [x] **Step 3: Update `validate_trade`**
 Add the GFV check.
 
 ```python
@@ -93,10 +93,10 @@ def validate_trade(self, quantity: int, price: float, side: str, ...):
     return True
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 Run: `pytest tests/test_oracle.py -v`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add src/core/oracle.py
 git commit -m "feat(oracle): implement GFV prevention logic in validate_trade"
@@ -108,7 +108,7 @@ git commit -m "feat(oracle): implement GFV prevention logic in validate_trade"
 - Modify: `src/core/oracle.py`
 - Modify: `src/core/backtest_engine.py` (to pass cost)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 Test that a trade exit correctly updates `unsettled_cash` and `settled_cash`.
 
 ```python
@@ -134,9 +134,9 @@ def test_t1_settlement_flow():
     assert state.unsettled_cash == 0.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-- [ ] **Step 3: Modify `Oracle` and `BacktestEngine`**
+- [x] **Step 3: Modify `Oracle` and `BacktestEngine`**
 Update `update_session` signature and logic. Update `process_eod_anchor`. Update `BacktestEngine` to pass cost.
 
 ```python
@@ -163,10 +163,10 @@ def process_eod_anchor(self):
     self.state.save()
 ```
 
-- [ ] **Step 4: Run tests and verify all pass**
+- [x] **Step 4: Run tests and verify all pass**
 Run: `pytest tests/test_oracle.py -v`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add src/core/oracle.py src/core/backtest_engine.py
 git commit -m "feat(oracle): implement T+1 cash flow logic"

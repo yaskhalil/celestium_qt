@@ -78,3 +78,36 @@ def test_eod_time_limit():
     # This test depends on system time, but we can mock it or test the logic.
     # For now, let's assume the current time is forced in the property check.
     pass
+
+def test_t1_settlement_flow():
+    """Verifies cash pool movement intraday and conversion at EOD."""
+    from src.config import settings
+    state = AccountState(
+        balance=400.0,
+        settled_cash=400.0,
+        unsettled_cash=0.0
+    )
+    oracle = Oracle(state)
+    
+    comm = 2 * settings.COMMISSION_PER_LOT
+    
+    # 1. Simulate BUY entry (cost: 340.0, quantity: 2)
+    oracle.update_session(pnl=0.0, cash_flow=340.0, quantity=2, side="BUY")
+    expected_settled = 400.0 - (340.0 + comm)
+    assert round(state.settled_cash, 2) == round(expected_settled, 2)
+    assert state.unsettled_cash == 0.0
+    assert round(state.balance, 2) == round(expected_settled, 2)
+
+    # 2. Simulate SELL exit (pnl: 10.0, proceeds/cash_flow: 350.0)
+    oracle.update_session(pnl=10.0, cash_flow=350.0, quantity=2, side="SELL")
+    expected_unsettled = 350.0 - comm
+    assert round(state.settled_cash, 2) == round(expected_settled, 2)
+    assert round(state.unsettled_cash, 2) == round(expected_unsettled, 2)
+    expected_balance = expected_settled + expected_unsettled
+    assert round(state.balance, 2) == round(expected_balance, 2)
+
+    # 3. Simulate EOD anchor
+    oracle.process_eod_anchor()
+    assert round(state.settled_cash, 2) == round(expected_balance, 2)
+    assert state.unsettled_cash == 0.0
+    assert round(state.balance, 2) == round(expected_balance, 2)

@@ -7,7 +7,9 @@ from src.config import settings
 
 logger = structlog.get_logger()
 
-def run_stress_test(num_simulations: int = 1000, initial_balance: float = 27000.0):
+def run_stress_test(num_simulations: int = 1000, initial_balance: float = None):
+    if initial_balance is None:
+        initial_balance = settings.STARTING_BALANCE
     """
     Monte Carlo Simulation for Sequence-of-Returns Risk.
     Shuffles trades to see how often the $26,100 floor is breached.

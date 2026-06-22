@@ -6,14 +6,16 @@ import asyncio
 
 @pytest.fixture
 def mock_alpaca_client():
-    return MagicMock()
+    client = MagicMock()
+    client.get_last_price = AsyncMock(return_value=15.0)
+    return client
 
 @pytest.fixture
 def engine(mock_alpaca_client):
     with patch('src.core.engine.DuckDBBuffer'), \
          patch('src.core.engine.BooleanStateSpace'), \
          patch('src.core.engine.Oracle'), \
-         patch('src.core.engine.AlpacaRouter'), \
+         patch('src.core.engine.PositionManager'), \
          patch('src.core.engine.Classifier'), \
          patch('src.core.engine.Allocator'), \
          patch('src.core.engine.Advisor'), \

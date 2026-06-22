@@ -55,9 +55,13 @@ async def main():
     except Exception as e:
         logger.error("Failed to fetch Alpaca account. Using defaults.", error=str(e))
     
-    # 4. Initialize the scheduled engine
+    # 4. Initialize the scheduled engine and Telegram bot
+    from src.core.telegram_bot import TelegramBot
     engine = ScheduledEngine(alpaca_client, state)
+    bot = TelegramBot(engine)
+    
     engine.start()
+    bot.start()
     
     # Start the event loop
     try:
@@ -68,7 +72,8 @@ async def main():
     except Exception as e:
         logger.error("Critical failure", error=str(e))
     finally:
-        # Stop scheduler and save state
+        # Stop scheduler, bot, and save state
+        await bot.stop()
         await engine.stop()
         state.save()
         await alpaca_client.close()
