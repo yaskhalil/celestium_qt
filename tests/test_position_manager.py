@@ -70,3 +70,22 @@ async def test_position_tracking(mock_client, mock_state, mock_oracle):
     await router._verify_position("SPLG")
     
     assert router.current_position == 0.0
+
+@pytest.mark.asyncio
+async def test_flatten_position(mock_client, mock_state, mock_oracle):
+    router = PositionManager(mock_client, mock_state, mock_oracle)
+    
+    # 1. Setup mock to simulate active position of 5 shares
+    mock_client.get_position.return_value = 5.0
+    mock_client.place_order.return_value = {"id": "alpaca-order-exit"}
+    
+    with patch("src.execution.position_manager.settings.SHADOW_MODE", False):
+        await router.flatten("SPLG", 150.25)
+        
+    mock_client.place_order.assert_called_once_with(
+        symbol="SPLG",
+        qty=5.0,
+        side="SELL",
+        order_type="market",
+        limit_price=None
+    )

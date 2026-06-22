@@ -46,6 +46,13 @@ class PositionManager:
                 logger.info("PositionManager: TAKE PROFIT HIT", price=self.take_profit, current=price)
                 await self.execute_trade(symbol, abs(self.current_position), "SELL", price=price)
 
+    async def flatten(self, symbol: str, price: float):
+        """Unconditionally exits active position (e.g. EOD or emergency)."""
+        await self._verify_position(symbol)
+        if self.current_position != 0:
+            logger.warning("PositionManager: Unconditional flatten triggered", symbol=symbol, position=self.current_position, price=price)
+            await self.execute_trade(symbol, abs(self.current_position), "SELL", price=price)
+
     async def execute_trade(self, symbol: str, quantity: float, side: str, price: float, tp: float = 0.0, sl: float = 0.0):
         """Executes a trade via Alpaca API and updates local and Oracle state."""
         await self._verify_position(symbol)

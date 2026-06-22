@@ -1,5 +1,6 @@
 from enum import Enum
 from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 import structlog
@@ -64,8 +65,8 @@ class AccountState(BaseModel):
 
     def is_trading_allowed(self, current_time: Optional[time] = None) -> bool:
         # Note: Bulenox times are ET, Rithmic uses UTC. 
-        # For simplicity in this logic, we use time of day.
-        now_et = current_time or datetime.now(timezone.utc).time()
+        # For simplicity in this logic, we use time of day in ET.
+        now_et = current_time or datetime.now(ZoneInfo("America/New_York")).time()
         if now_et >= time(16, 55) and now_et <= time(18, 0):
             return False
         return self.status == AccountStatus.ACTIVE

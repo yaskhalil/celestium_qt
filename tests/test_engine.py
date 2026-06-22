@@ -67,3 +67,13 @@ async def test_engine_tick_success(engine):
         assert args[1] == 1 # Quantity
         assert args[2] == "BUY"
         assert kwargs["price"] == 100.0
+
+@pytest.mark.asyncio
+async def test_engine_tick_eod(engine):
+    """Test that tick_eod calls router.flatten with the current price."""
+    engine.alpaca_client.get_last_price = AsyncMock(return_value=123.45)
+    engine.router.flatten = AsyncMock()
+
+    await engine.tick_eod()
+
+    engine.router.flatten.assert_called_once_with("SPYM", 123.45)

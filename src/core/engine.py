@@ -86,6 +86,20 @@ class ScheduledEngine:
         except Exception as e:
             logger.error("Engine: Monitor tick failed", error=str(e))
 
+    async def tick_eod(self):
+        """EOD Flatten: Runs at 3:55 PM ET to unconditionally close remaining positions."""
+        logger.info("Engine: EOD Flatten triggered")
+        symbol = self.current_symbol
+        current_price = await self.alpaca_client.get_last_price(symbol)
+        if current_price is None:
+            logger.error("Engine: Could not obtain price for EOD flatten", symbol=symbol)
+            return
+
+        try:
+            await self.router.flatten(symbol, current_price)
+        except Exception as e:
+            logger.error("Engine: EOD Flatten failed", error=str(e))
+
     async def tick_signal(self):
         """Slow tick: Triggered every 5 minutes to generate new trade signals."""
         logger.info("Engine: Signal check triggered (5m interval)")
@@ -158,7 +172,7 @@ class ScheduledEngine:
         
         # 3. EOD Flatten (3:55 PM ET)
         self.scheduler.add_job(
-            self.tick_monitor,
+            self.tick_eod,
             CronTrigger(day_of_week='mon-fri', hour='15', minute='55', timezone='America/New_York'),
             id='market_tick_eod'
         )

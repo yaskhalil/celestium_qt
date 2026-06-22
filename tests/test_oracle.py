@@ -75,9 +75,16 @@ def test_gfv_protection():
 
 def test_eod_time_limit():
     """Simulates trading during the Apex flat period (4:55 PM - 6:00 PM ET)."""
-    # This test depends on system time, but we can mock it or test the logic.
-    # For now, let's assume the current time is forced in the property check.
-    pass
+    state = AccountState(balance=400.0)
+    oracle = Oracle(state)
+
+    # Within flat period: 5:30 PM (17:30)
+    assert state.is_trading_allowed(current_time=time(17, 30)) is False
+    assert oracle.validate_trade(1, 60.0, "BUY", current_time=time(17, 30), current_hurst=0.6) is False
+
+    # Outside flat period: 10:00 AM (10:00)
+    assert state.is_trading_allowed(current_time=time(10, 0)) is True
+    assert oracle.validate_trade(1, 60.0, "BUY", current_time=time(10, 0), current_hurst=0.6) is True
 
 def test_t1_settlement_flow():
     """Verifies cash pool movement intraday and conversion at EOD."""
