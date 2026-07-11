@@ -66,9 +66,12 @@ class SignalGenerator:
 
         # 5. Oracle Risk Firewall Validation
         current_hurst = context["hurst"].tail(1).item() if "hurst" in context.columns else 0.5
-        if not self.oracle.validate_trade(size, decision_price, "BUY", current_hurst=current_hurst, current_vix=vix_price):
-            logger.info("SignalGenerator: Signal vetoed by Oracle")
-            return None, f"Oracle vetoed: prob {signal_prob:.4f}"
+        approved, reason = self.oracle.validate_trade(size, decision_price, "BUY",
+                                                      current_hurst=current_hurst,
+                                                      current_vix=vix_price)
+        if not approved:
+            logger.info("SignalGenerator: Signal vetoed by Oracle", reason=reason)
+            return None, f"Oracle vetoed: {reason}"
 
         # 6. Construct Trade Proposal
         tp = decision_price + (atr * settings.PT_MULTIPLIER)

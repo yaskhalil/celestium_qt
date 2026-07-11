@@ -130,13 +130,13 @@ class ScheduledEngine:
             return
             
         # Don't enter new trades if already in one
-        await self.router._verify_position(symbol)
+        await self.router.sync_position(symbol)
         if self.router.current_position != 0:
             logger.debug("Engine: Existing position active, skipping signal generation")
             return
 
-        # Fetch VIXY (ProShares VIX ETF) to use as circuit breaker volatility proxy
-        vix_price = await self.alpaca_client.get_last_price("VIXY") or 15.0
+        # Fetch VIXY with conservative fallback (high = circuit breaker, not low)
+        vix_price = await self.alpaca_client.get_last_price_conservative("VIXY", default_if_fail=30.0)
 
         # Generate proposal from strategy module
         proposal, veto_reason = self.strategy.generate_proposal(context, context_market, vix_price)

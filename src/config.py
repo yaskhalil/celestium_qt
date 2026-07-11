@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 class Settings(BaseSettings):
-    # Webull Connectivity
+    # Webull Connectivity (Legacy)
     WEBULL_APP_KEY: str = Field(default="", alias="WEBULL_APP_KEY")
     WEBULL_APP_SECRET: str = Field(default="", alias="WEBULL_APP_SECRET")
     WEBULL_ACCESS_TOKEN: str = Field(default="", alias="WEBULL_ACCESS_TOKEN")
@@ -31,25 +31,31 @@ class Settings(BaseSettings):
     CONTEXT_SYMBOL: str = "QQQ"
     EXCHANGE: str = "NASD"
     
-    # Risk Limits (Bulenox 50K EOD - Option 2)
-    STARTING_BALANCE: float = 50000.0
-    BALANCE_FLOOR: float = 47500.0  # Initial floor for 50k account ($2,500 drawdown)
-    DAILY_LOSS_LIMIT: float = 1100.0
-    SOFT_KILL_SWITCH: float = 1050.0 # Trigger flatten before hard limit
-    TOTAL_PROFIT_TARGET: float = 3000.0
-    DAILY_PROFIT_CEILING: float = 1200.0 # 40% of $3,000
-    MAX_POSITION_SIZE_MINI: int = 7
-    MAX_POSITION_SIZE_MICRO: int = 70
-    CONSISTENCY_THRESHOLD: float = 0.40 # 40% Rule
+    # ── Dynamic Risk Limits (% of Balance) ─────────────────────────────
+    # All risk limits are now percentages of the actual account balance,
+    # fetched from Alpaca at startup. The old hardcoded $50K defaults are gone.
+    
+    # Daily Loss Limit: % of balance that triggers intraday halt
+    DLL_PCT: float = Field(default=0.05, alias="DLL_PCT")  # 5% of balance
+    # Daily Profit Ceiling: % gain before auto-locking for the day
+    PROFIT_CEILING_PCT: float = Field(default=0.06, alias="PROFIT_CEILING_PCT")  # 6% of balance
+    # Balance Floor: % of starting balance that triggers full stop
+    FLOOR_PCT: float = Field(default=0.90, alias="FLOOR_PCT")  # 90% of starting balance = 10% max drawdown
+    # Safety reserve: % of balance held back from trading
+    RESERVE_PCT: float = Field(default=0.05, alias="RESERVE_PCT")  # 5%
+    # Soft kill switch: % of DLL that triggers early flatten
+    SOFT_KILL_PCT: float = Field(default=0.85, alias="SOFT_KILL_PCT")  # 85% of DLL
+
+    # ── Position & Trading Limits ─────────────────────────────────────
+    MAX_POSITION_PCT: float = Field(default=0.30, alias="MAX_POSITION_PCT")  # Max 30% of balance in one position
     MAX_DAILY_TRADES: int = 50
-    QUALIFYING_THRESHOLD: float = 100.0
     HURST_THRESHOLD: float = 0.42
     
     # Strategy Parameters
     SHADOW_MODE: bool = Field(default=True, alias="SHADOW_MODE")
-    COMMISSION_PER_LOT: float = 0.60 # MNQ Round-trip
+    COMMISSION_PER_LOT: float = 0.60
     SIGNAL_THRESHOLD: float = 0.4
-    TICK_VALUE: float = 2.0 # Micro Nasdaq
+    TICK_VALUE: float = 2.0
     PT_MULTIPLIER: float = 1.0
     SL_MULTIPLIER: float = 0.5
 
@@ -64,10 +70,6 @@ class Settings(BaseSettings):
     TELEGRAM_ENABLED: bool = Field(default=False, alias="TELEGRAM_ENABLED")
     TELEGRAM_BOT_TOKEN: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID: str = Field(default="", alias="TELEGRAM_CHAT_ID")
-
-    # Payout Rules
-    SAFETY_THRESHOLD_RESERVE: float = 2600.0
-    MIN_WITHDRAWAL: float = 1000.0
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

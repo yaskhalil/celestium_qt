@@ -1,7 +1,7 @@
 import asyncio
 import structlog
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 from src.config import settings
 from src.core.oracle import AccountState, Oracle
 from src.execution.alpaca_client import AlpacaClient
@@ -10,107 +10,138 @@ from src.core.notifier import TelegramNotifier
 logger = structlog.get_logger()
 
 class PositionManager:
-    """
-    Deep execution module managing active positions, stops, limits, 
-    compliance hold rules, and broker execution logic.
-    """
-    def __init__(self, client: AlpacaClient, state: AccountState, oracle: Oracle, notifier: Optional[TelegramNotifier] = None):
+    """Execution module managing positions, stops, limits, and broker integration."""
+
+    def __init__(self, client: AlpacaClient, state: AccountState,
+                 oracle: Oracle, notifier: Optional[TelegramNotifier] = None):
         self.client = client
         self.state = state
         self.oracle = oracle
         self.notifier = notifier or TelegramNotifier()
         self.current_position = 0
         self.min_hold_seconds = 30
-        
-        # Local position tracking
+
         self.entry_price = 0.0
         self.stop_loss = 0.0
         self.take_profit = 0.0
 
-    async def _verify_position(self, symbol: str):
-        """Syncs the current position with the broker."""
+    async def sync_position(self, symbol: str):
+        """Reconcile position and market value from broker. Call on startup and every monitor tick."""
         try:
             self.current_position = await self.client.get_position(symbol)
-            logger.info("PositionManager: Position Verified", symbol=symbol, position=self.current_position)
+            market_value = await self.client.get_position_market_value(symbol)
+            self.state.position_market_value = market_value
+            self.state.equity = self.state.balance + market_value
+            logger.info("Position synced", symbol=symbol,
+                       qty=self.current_position, market_value=market_value)
         except Exception as e:
-            logger.error("PositionManager: Position Verification Error", error=str(e))
+            logger.error("Position sync failed", error=str(e))
+
+    async def _verify_position(self, symbol: str):
+        """Legacy alias for sync_position."""
+        await self.sync_position(symbol)
 
     async def update_price(self, symbol: str, price: float):
-        """Monitors current market price and exits position if stops/limits hit."""
-        await self._verify_position(symbol)
-        if self.current_position != 0:
-            if price <= self.stop_loss:
-                logger.warning("PositionManager: STOP LOSS HIT", price=self.stop_loss, current=price)
-                await self.execute_trade(symbol, abs(self.current_position), "SELL", price=price)
-            elif price >= self.take_profit:
-                logger.info("PositionManager: TAKE PROFIT HIT", price=self.take_profit, current=price)
-                await self.execute_trade(symbol, abs(self.current_position), "SELL", price=price)
+        """Monitor price and exit if stops/limits hit — validates SELL via Oracle."""
+        await self.sync_position(symbol)
+        if self.current_position == 0:
+            return
 
-    async def flatten(self, symbol: str, price: float):
-        """Unconditionally exits active position (e.g. EOD or emergency)."""
-        await self._verify_position(symbol)
-        if self.current_position != 0:
-            logger.warning("PositionManager: Unconditional flatten triggered", symbol=symbol, position=self.current_position, price=price)
+        should_exit = False
+        exit_reason = ""
+
+        if self.stop_loss > 0 and price <= self.stop_loss:
+            should_exit = True
+            exit_reason = "STOP LOSS"
+        elif self.take_profit > 0 and price >= self.take_profit:
+            should_exit = True
+            exit_reason = "TAKE PROFIT"
+
+        if should_exit:
+            # Validate SELL through Oracle
+            approved, reason = self.oracle.validate_sell(abs(self.current_position), price)
+            if not approved:
+                logger.warning("Oracle blocked SELL", reason=reason, exit_reason=exit_reason)
+                return
+
+            logger.info(f"PositionManager: {exit_reason} HIT", price=price)
             await self.execute_trade(symbol, abs(self.current_position), "SELL", price=price)
 
-    async def execute_trade(self, symbol: str, quantity: float, side: str, price: float, tp: float = 0.0, sl: float = 0.0):
-        """Executes a trade via Alpaca API and updates local and Oracle state."""
-        await self._verify_position(symbol)
+    async def flatten(self, symbol: str, price: float):
+        """Unconditional position exit (EOD or emergency)."""
+        await self.sync_position(symbol)
+        if self.current_position == 0:
+            return
 
-        # Compliance: Minimum Hold Time (prevent GFV)
-        if side == "SELL" and self.current_position > 0:
+        # Validate SELL through Oracle
+        approved, reason = self.oracle.validate_sell(abs(self.current_position), price)
+        if not approved:
+            logger.warning("Oracle blocked flatten", reason=reason)
+            return
+
+        logger.warning("Flatten triggered", symbol=symbol,
+                      qty=self.current_position, price=price)
+        await self.execute_trade(symbol, abs(self.current_position), "SELL", price=price)
+
+    async def execute_trade(self, symbol: str, quantity: float, side: str,
+                            price: float, tp: float = 0.0, sl: float = 0.0) -> Optional[str]:
+        """Execute trade — validates BUY via Oracle, SELL via validate_sell()."""
+        await self.sync_position(symbol)
+
+        # Compliance: minimum hold time (GFV prevention)
+        if side.upper() == "SELL" and self.current_position > 0:
             if self.state.current_entry_time:
                 elapsed = (datetime.now(timezone.utc) - self.state.current_entry_time).total_seconds()
                 if elapsed < self.min_hold_seconds:
-                    wait_time = self.min_hold_seconds - elapsed
-                    logger.warning("PositionManager: Minimum hold not met. Waiting.", wait=round(wait_time, 2))
-                    await asyncio.sleep(wait_time)
-        
+                    wait = self.min_hold_seconds - elapsed
+                    logger.warning("Min hold not met, waiting", wait=round(wait, 2))
+                    await asyncio.sleep(wait)
+
         if settings.SHADOW_MODE:
-            logger.info("PositionManager: SHADOW MODE - Order would be placed", symbol=symbol, side=side, qty=quantity, price=price)
-            await self.notifier.notify_trade(symbol, side, quantity, price, "shadow_order_id", tp=tp, sl=sl)
-            
-            # Update local tracking and oracle session for Shadow Mode
-            self._update_local_and_oracle_state(quantity, side, price, tp, sl)
+            qty_label = f"{quantity:.4f}" if quantity < 1 else f"{quantity:.2f}"
+            logger.info("SHADOW MODE", symbol=symbol, side=side, qty=qty_label, price=price)
+            await self.notifier.notify_trade(symbol, side, quantity, price,
+                                            "shadow_order_id", tp=tp, sl=sl)
+            self._update_local_state(quantity, side, price, tp, sl)
             return "shadow_order_id"
 
         try:
             res = await self.client.place_order(
-                symbol=symbol,
-                qty=quantity,
-                side=side,
-                order_type="limit" if side == "BUY" else "market",
-                limit_price=round(price, 2) if side == "BUY" else None
+                symbol=symbol, qty=quantity, side=side
             )
-            order_id = res.get("id")
-            logger.info("PositionManager: Order Placed", order_id=order_id, symbol=symbol, side=side, qty=quantity)
-            
-            # Send Notification
-            await self.notifier.notify_trade(symbol, side, quantity, price, order_id or "N/A", tp=tp, sl=sl)
-
-            # Update local tracking and oracle session
-            self._update_local_and_oracle_state(quantity, side, price, tp, sl)
+            order_id = res.get("id", "unknown")
+            logger.info("Order placed", symbol=symbol, side=side,
+                       qty=quantity, order_id=order_id)
+            await self.notifier.notify_trade(symbol, side, quantity, price,
+                                            order_id, tp=tp, sl=sl)
+            self._update_local_state(quantity, side, price, tp, sl)
             return order_id
         except Exception as e:
-            logger.error("PositionManager: Execution Error", error=str(e))
+            logger.error("Order failed", error=str(e))
+            await self.notifier.notify(f"❌ Order failed: {symbol} {side} {quantity} — {e}")
             return None
 
-    def _update_local_and_oracle_state(self, quantity: float, side: str, price: float, tp: float, sl: float):
-        """Helper to sync positions and Oracle session cash flows."""
-        if side == "BUY":
+    def _update_local_state(self, quantity: float, side: str, price: float,
+                            tp: float = 0.0, sl: float = 0.0):
+        """Update local tracking after trade execution."""
+        cost = quantity * price
+        self.state.current_daily_trades += 1
+
+        if side.upper() == "BUY":
+            self.current_position += quantity
             self.entry_price = price
             self.take_profit = tp
             self.stop_loss = sl
             self.state.current_entry_time = datetime.now(timezone.utc)
-            
-            self.oracle.update_session(cash_flow=quantity * price, quantity=quantity, side="BUY")
-        else:
-            # Calculate PnL on exit
-            pnl = (price - self.entry_price) * self.current_position * settings.TICK_VALUE
-            self.oracle.update_session(pnl=pnl, cash_flow=quantity * price, quantity=quantity, side="SELL")
-            
+            # Update Oracle state
+            self.oracle.update_session(pnl=0.0, cash_flow=cost, quantity=quantity,
+                                      side="BUY", position_value=cost)
+        elif side.upper() == "SELL":
+            self.current_position = 0
+            estimated_pnl = quantity * (price - self.entry_price)
+            self.oracle.update_session(pnl=estimated_pnl, cash_flow=cost, quantity=quantity,
+                                      side="SELL", position_value=0)
             self.entry_price = 0.0
             self.take_profit = 0.0
             self.stop_loss = 0.0
-            self.current_position = 0
             self.state.current_entry_time = None
