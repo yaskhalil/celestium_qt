@@ -10,8 +10,8 @@ class Allocator:
     Bridges Layer 2 (Model) and Layer 3 (Oracle).
     """
     
-    def __init__(self, max_contracts: int = settings.MAX_POSITION_SIZE_MICRO):
-        self.max_contracts = max_contracts
+    def __init__(self, max_position_pct: float | None = None):
+        self.max_position_pct = max_position_pct if max_position_pct is not None else settings.MAX_POSITION_PCT
 
     def calculate_size(self, probability: float, atr: float, balance: float, current_price: float, daily_pnl: float = 0.0) -> float:
         """
@@ -46,7 +46,9 @@ class Allocator:
         # Hard constraint: Cannot exceed actual cash balance (accounting for 5% slippage/fees buffer)
         max_affordable_shares = (balance * 0.95) / max(current_price, 0.01)
         
-        final_size = min(calculated_shares, max_affordable_shares)
+        # Cap by max position percentage of balance
+        max_position_shares = (balance * self.max_position_pct) / max(current_price, 0.01)
+        final_size = min(calculated_shares, max_affordable_shares, max_position_shares)
         
         # Ensure minimum fractional size
         if final_size < 0.01 and probability > 0.6:
