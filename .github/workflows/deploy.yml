@@ -1,0 +1,52 @@
+name: CI + Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Populate these secrets to enable auto-deploy to the DigitalOcean droplet:
+  #   DEPLOY_HOST     -> droplet IP or hostname
+  #   DEPLOY_USER     -> SSH user (root or passwordless-sudo)
+  #   DEPLOY_SSH_KEY  -> private key (ed25519/rsa) for that user
+  # The deploy job is skipped while DEPLOY_HOST is unset; CI still runs.
+  DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+  DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+
+jobs:
+  test:
+    name: Run test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run python -m pytest tests/ -q
+
+  deploy:
+    name: Deploy to droplet
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ env.DEPLOY_HOST != '' }}
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/celestium_qt
+            git fetch origin
+            git reset --hard origin/main
+            uv sync
+            systemctl restart celestium
+            systemctl status celestium --no-pager | head -5

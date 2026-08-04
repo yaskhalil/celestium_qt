@@ -90,6 +90,22 @@ systemctl restart celestium
 
 ---
 
+## 🚀 Push-to-Deploy (GitHub Actions)
+
+Every push to `main` runs the full test suite in CI, then **auto-deploys to the Droplet** — no SSH by hand.
+
+1. Add three repository secrets (GitHub → Settings → Secrets and variables → Actions):
+   - `DEPLOY_HOST` — droplet IP or hostname
+   - `DEPLOY_USER` — SSH user (`root`, or a user with passwordless sudo)
+   - `DEPLOY_SSH_KEY` — the private key for that user (e.g. contents of `~/.ssh/id_ed25519`)
+
+2. Verify the droplet can be reached by the key once: `ssh <DEPLOY_USER>@<DEPLOY_HOST>`
+3. Push to `main`. CI tests run first; the deploy job runs `git reset --hard origin/main && uv sync && systemctl restart celestium` on `/opt/celestium_qt`.
+
+The deploy job is skipped until `DEPLOY_HOST` is set, so CI is safe to enable immediately.
+
+---
+
 ## 🛠 Service Management
 
 CelestiumQT runs as a system service (`systemd`), ensuring it starts on boot and restarts automatically if it crashes.
