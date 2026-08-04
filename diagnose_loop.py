@@ -2,10 +2,12 @@ import asyncio
 import structlog
 import os
 from src.config import settings
+from src.core.logging_setup import setup_logging
 from src.core.engine import ScheduledEngine
 from src.execution.alpaca_client import AlpacaClient
 
-structlog.configure()
+setup_logging()
+logger = structlog.get_logger()
 
 async def run_diagnostics():
     print("Starting diagnostics harness...")

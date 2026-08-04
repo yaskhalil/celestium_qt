@@ -5,11 +5,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import polars as pl
 import json
 import structlog
+from src.core.logging_setup import setup_logging
 from src.core.backtest_engine import BacktestEngine
 from src.features.regime import add_regime_features
 
 from src.config import settings
 
+setup_logging()
 logger = structlog.get_logger()
 
 def run_backtest():

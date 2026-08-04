@@ -1,11 +1,12 @@
 import asyncio
 import structlog
+from src.core.logging_setup import setup_logging
 from src.execution.alpaca_client import AlpacaClient
 from src.core.engine import ScheduledEngine
 from src.core.oracle import AccountState
 from src.config import settings
 
-structlog.configure()
+setup_logging()
 logger = structlog.get_logger()
 
 def verify_timezone():
@@ -30,7 +31,6 @@ async def main():
     # 2. Validate API keys before booting anything
     if not await alpaca.test_connection():
         logger.critical("Alpaca API keys invalid — aborting startup")
-        print("ERROR: Alpaca API keys failed validation. Check your .env file.")
         return
 
     # 3. Sync actual account state from Alpaca
@@ -41,7 +41,6 @@ async def main():
 
     if actual_equity <= 0:
         logger.critical("Account has zero balance — aborting")
-        print("ERROR: Alpaca account has zero balance. Cannot start.")
         return
 
     # 4. Load or initialize persistent state

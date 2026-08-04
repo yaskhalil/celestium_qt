@@ -228,8 +228,11 @@ class ScheduledEngine:
 
 if __name__ == "__main__":
     # Scheduler initialization replaced main loop
+    from src.core.logging_setup import setup_logging
     from src.execution.alpaca_client import AlpacaClient
-    
+
+    setup_logging()
+
     async def main():
         # Initialize native AlpacaClient
         alpaca_client = AlpacaClient(

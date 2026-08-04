@@ -4,9 +4,11 @@ from sklearn.metrics import classification_report
 import numpy as np
 import os
 import structlog
+from src.core.logging_setup import setup_logging
 from src.features.regime import add_regime_features
 from src.features.labels import apply_triple_barrier_labels
 
+setup_logging()
 logger = structlog.get_logger()
 
 def prepare_data(raw_path: str) -> pl.DataFrame:

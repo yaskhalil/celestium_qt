@@ -1,7 +1,10 @@
 import os
 import json
+import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+
+logger = structlog.get_logger()
 
 class Settings(BaseSettings):
     # Webull Connectivity (Legacy)
@@ -92,6 +95,6 @@ if os.path.exists(DEPLOYMENT_PATH):
                 attr_name = k.upper()
                 if hasattr(settings, attr_name):
                     setattr(settings, attr_name, v)
-        print(f"--- DEPLOYMENT CONFIG LOADED: {DEPLOYMENT_PATH} ---")
+        logger.info("Deployment config loaded", path=DEPLOYMENT_PATH)
     except Exception as e:
-        print(f"Error loading deployment config: {e}")
+        logger.error("Error loading deployment config", error=str(e))
