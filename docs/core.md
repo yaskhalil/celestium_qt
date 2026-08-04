@@ -19,8 +19,11 @@ Handles business logic, risk firewall, state machine.
 ### `backtest_engine.py`
 - Simulates historical trading. Uses `DuckDB` + `Polars`.
 
-### `boolean_network.py`
-- Logic constraints. Combine signals.
+### `regime_filter.py`
+- Trend-regime gate (close > SMA20, Hurst, ADX) computed from real features.
+
+### `logging_setup.py`
+- Central structlog configuration: JSON logs to rotating file + console, level from LOG_LEVEL.
 
 ### `payout_logic.py`
 - Manage reserve threshold, payout liquid capital.

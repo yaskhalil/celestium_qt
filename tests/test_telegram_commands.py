@@ -12,7 +12,7 @@ def mock_alpaca_client():
 @pytest.fixture
 def engine(mock_alpaca_client):
     with patch('src.core.engine.DuckDBBuffer'), \
-         patch('src.core.engine.BooleanStateSpace'), \
+         patch('src.core.engine.RegimeFilter'), \
          patch('src.core.engine.Oracle'), \
          patch('src.core.engine.PositionManager'), \
          patch('src.core.engine.Classifier'), \

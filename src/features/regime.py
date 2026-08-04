@@ -153,6 +153,11 @@ def add_regime_features(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("hurst") - pl.col("hurst").shift(5)).alias("hurst_gradient")
     )
 
+    # 4b. 20-bar Simple Moving Average (trend baseline for regime gates)
+    df = df.with_columns(
+        pl.col("close").rolling_mean(window_size=20).alias("sma_20")
+    )
+
     # 5. Volatility-Adjusted Momentum (10-period)
     df = df.with_columns(
         ((pl.col("close") - pl.col("close").shift(10)) / pl.col("atr")).alias("vol_adj_momentum")

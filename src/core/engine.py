@@ -10,7 +10,7 @@ import os
 from src.config import settings
 from src.data.pipeline import DuckDBBuffer
 from src.core.oracle import Oracle, AccountState, AccountStatus
-from src.core.boolean_network import BooleanStateSpace
+from src.core.regime_filter import RegimeFilter
 from src.execution.position_manager import PositionManager
 from src.models.classifier import Classifier
 from src.core.allocator import Allocator
@@ -34,12 +34,12 @@ class ScheduledEngine:
         self.account_state = account_state or AccountState.load()
         self.alpaca_client = alpaca_client
         self.buffer = DuckDBBuffer()
-        self.bn = BooleanStateSpace()
+        self.regime_filter = RegimeFilter()
         self.notifier = notifier or TelegramNotifier()
         self.oracle = Oracle(self.account_state, self.notifier)
         self.allocator = Allocator()
         self.classifier = Classifier()
-        self.strategy = SignalGenerator(self.bn, self.classifier, self.allocator, self.oracle)
+        self.strategy = SignalGenerator(self.regime_filter, self.classifier, self.allocator, self.oracle)
         
         self.router = PositionManager(alpaca_client, self.account_state, self.oracle, self.notifier)
         self.ingestor = AlpacaIngestor(client=alpaca_client)
@@ -106,7 +106,7 @@ class ScheduledEngine:
         symbol = self.current_symbol
 
         # 1. Fetch context (Requires 111+ bars for model)
-        # We also need the context symbol (QQQ) for the BooleanStateSpace
+        # We also need the context symbol (QQQ) for regime context
         try:
             context = self.buffer.get_context(symbol, window=150)
             context_market = self.buffer.get_context(self.context_symbol, window=150)
