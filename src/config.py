@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     MAX_POSITION_PCT: float = Field(default=0.30, alias="MAX_POSITION_PCT")  # Max 30% of balance in one position
     MAX_DAILY_TRADES: int = 50
     HURST_THRESHOLD: float = 0.42
+    ADX_THRESHOLD: float = 25.0  # Trend regime gate: ADX above this = trending
+
+    # Backtest defaults (prop-firm account sizing)
+    STARTING_BALANCE: float = Field(default=25000.0, alias="STARTING_BALANCE")
+    # Minimum day PnL for a "qualifying day" in backtest reporting
+    QUALIFYING_THRESHOLD: float = Field(default=250.0, alias="QUALIFYING_THRESHOLD")
     
     # Strategy Parameters
     SHADOW_MODE: bool = Field(default=True, alias="SHADOW_MODE")

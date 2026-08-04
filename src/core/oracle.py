@@ -268,7 +268,9 @@ class Oracle:
         self.state.balance = self.state.settled_cash + self.state.unsettled_cash
         # Equity = cash + market value of open positions
         self.state.equity = self.state.balance + self.state.position_market_value
-        self.state.current_daily_trades += 1
+        # NOTE: trade counting is the caller's job (entry sides only), so a
+        # round trip counts once against MAX_DAILY_TRADES. Callers:
+        # position_manager._update_local_state and backtest_engine._enter_trade.
 
         if self.state.current_daily_pnl <= -self.state.daily_loss_limit:
             self.state.status = AccountStatus.PAUSED_DAILY_LOSS

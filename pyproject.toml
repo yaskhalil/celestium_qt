@@ -21,6 +21,7 @@ dependencies = [
     "databento>=0.76.0",
     "tzdata",
     "rich",
+    "mcp<2",
 ]
 
 [dependency-groups]

@@ -5,14 +5,15 @@ import json
 # Initialize the MCP Server named 'celestium-state'
 mcp = FastMCP("celestium-state")
 
-# In a real app, you'd load this from a JSON file or Redis
-state = AccountState(balance=27250.0, daily_pnl=150.0)
+# Load the persisted account state (falls back to a fresh default state
+# when data/account_state.json does not exist yet).
+state = AccountState.load()
 
 @mcp.tool()
 def get_account_summary() -> str:
     """Returns a high-level summary of the Apex account status."""
-    status = "✅ ACTIVE" if state.is_eligible_for_trade() else "❌ VETOED"
-    return f"Balance: ${state.balance} | Day PnL: ${state.daily_pnl} | Status: {status}"
+    status = "✅ ACTIVE" if state.is_trading_allowed() else "❌ VETOED"
+    return f"Balance: ${state.balance} | Day PnL: ${state.current_daily_pnl} | Status: {status}"
 
 @mcp.resource("account://current_state")
 def account_resource() -> str:

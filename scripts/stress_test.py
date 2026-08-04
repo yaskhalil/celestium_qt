@@ -36,8 +36,8 @@ def run_stress_test(num_simulations: int = 1000, initial_balance: float = None):
     final_balances = []
     max_drawdowns = []
     
-    # Floor is 26,100 (Apex Safety Net)
-    SAFETY_NET_FLOOR = settings.BALANCE_FLOOR
+    # Floor is 90% of starting balance (dynamic % based, Apex safety net)
+    SAFETY_NET_FLOOR = initial_balance * settings.FLOOR_PCT
     
     for i in range(num_simulations):
         # 2. Shuffle trades to create a new return path

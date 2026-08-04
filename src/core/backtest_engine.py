@@ -17,14 +17,13 @@ class BacktestEngine:
     """
 
     def __init__(self, initial_balance: Optional[float] = None):
+        # All risk limits are now computed dynamically as % of balance
+        # (AccountState properties) — no stale dollar-value settings.
         balance = initial_balance or settings.STARTING_BALANCE
         self.state = AccountState(
             balance=balance,
             equity=balance,
-            safety_net_floor=settings.BALANCE_FLOOR,
-            daily_loss_limit=settings.DAILY_LOSS_LIMIT,
-            soft_kill_switch=settings.SOFT_KILL_SWITCH,
-            daily_profit_ceiling=settings.DAILY_PROFIT_CEILING,
+            initial_starting_balance=balance,  # anchor floor to starting balance
             max_daily_trades=settings.MAX_DAILY_TRADES,
             hurst_threshold=settings.HURST_THRESHOLD
         )
@@ -85,10 +84,15 @@ class BacktestEngine:
             
             size = self.allocator.calculate_size(signal_prob, atr, self.state.balance, bar["close"])
 
-            if size > 0 and self.oracle.validate_trade(size, bar["close"], "BUY", 
-                                             current_hurst=self.current_hurst,
-                                             current_time=timestamp.time()):
-                self._enter_trade(size, bar["close"], timestamp, atr)
+            # NOTE: validate_trade returns (approved, reason) — unpacking is
+            # mandatory. The tuple itself is always truthy, so checking the
+            # tuple directly would silently ignore every Oracle veto.
+            if size > 0:
+                approved, _ = self.oracle.validate_trade(size, bar["close"], "BUY",
+                                                         current_hurst=self.current_hurst,
+                                                         current_time=timestamp.time())
+                if approved:
+                    self._enter_trade(size, bar["close"], timestamp, atr)
 
         if current_date is not None:
             self._process_eod(current_date)
@@ -106,6 +110,7 @@ class BacktestEngine:
         # Deduct cost from settled cash (T+1 logic)
         cost = size * price
         self.oracle.update_session(cash_flow=cost, quantity=size, side="BUY")
+        self.state.current_daily_trades += 1  # Count round trips by entry
 
         logger.debug("Trade Entered", price=price, size=size, tp=self.take_profit, sl=self.stop_loss)
 
@@ -119,7 +124,8 @@ class BacktestEngine:
             self._exit_trade(self.take_profit, bar["timestamp"], "TAKE_PROFIT")
 
     def _exit_trade(self, exit_price: float, timestamp: datetime, reason: str):
-        pnl = (exit_price - self.entry_price) * self.current_position * settings.TICK_VALUE
+        # Stock/ETF PnL: (exit - entry) * shares. No futures tick multiplier.
+        pnl = (exit_price - self.entry_price) * self.current_position
         proceeds = self.current_position * exit_price
         
         self.trades.append({
