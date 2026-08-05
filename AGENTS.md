@@ -34,6 +34,7 @@ Strategy wiring lives in `src/core/strategy.py` (RegimeFilter → Classifier →
 ## Deploy
 - Push to main → GitHub Actions runs tests → auto-deploys to droplet (needs DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY secrets).
 - Droplet path `/opt/celestium_qt`, systemd service `celestium`, logs via `journalctl -u celestium -f`.
-- `deploy.yml`'s `env:` for secrets lives at the job level (`jobs.deploy.env`), never workflow-level — GitHub rejects the whole file if `secrets` is referenced in a top-level `env:` block (see MISTAKES.md).
+- `secrets` context is only legal in a step's `run:`/`env:`/`with:`, or `jobs.<id>.env` — NEVER workflow-level `env:`, and NEVER any `if:` (job or step). `deploy.yml` gates the `deploy` job on a step output (`needs.test.outputs.deploy_enabled`) computed by a step in `test`, not on `secrets`/`env` directly in `if:` (see MISTAKES.md).
+- Run `actionlint .github/workflows/*.yml` (`brew install actionlint`) before pushing workflow changes — it catches context-availability violations that only otherwise surface as a run with zero jobs and no log.
 - `ingest_databento.yml` (Saturday cron) commits refreshed data back to `main` — needs `permissions: contents: write` in the workflow file itself, since the repo-wide Actions default can revert to read-only.
 - Both workflows have `workflow_dispatch` enabled — trigger manually from the Actions tab to test without waiting for the schedule/a push.

@@ -10,13 +10,17 @@ on:
 #   DEPLOY_USER     -> SSH user (root or passwordless-sudo)
 #   DEPLOY_SSH_KEY  -> private key (ed25519/rsa) for that user
 # The deploy job is skipped while DEPLOY_HOST is unset; CI still runs.
-# NOTE: `secrets` is not readable from workflow-level `env:` (GitHub rejects
-# the whole file if it is) — resolved inside the deploy job instead.
+# NOTE: `secrets` is only readable in a step's run:/env:/with: — never in a
+# workflow-level env: block, and never in a job-level if:. To gate the
+# deploy job on a secret's presence, a step below writes a job output,
+# and the deploy job's if: reads that output via needs.* (valid there).
 
 jobs:
   test:
     name: Run test suite
     runs-on: ubuntu-latest
+    outputs:
+      deploy_enabled: ${{ steps.check.outputs.enabled }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,11 +33,15 @@ jobs:
       - name: Run tests
         run: uv run python -m pytest tests/ -q
 
+      - name: Check deploy secrets
+        id: check
+        run: echo "enabled=${{ secrets.DEPLOY_HOST != '' }}" >> "$GITHUB_OUTPUT"
+
   deploy:
     name: Deploy to droplet
     needs: test
     runs-on: ubuntu-latest
-    if: ${{ secrets.DEPLOY_HOST != '' }}
+    if: needs.test.outputs.deploy_enabled == 'true'
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
