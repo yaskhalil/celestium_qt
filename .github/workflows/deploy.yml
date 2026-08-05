@@ -5,14 +5,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  # Populate these secrets to enable auto-deploy to the DigitalOcean droplet:
-  #   DEPLOY_HOST     -> droplet IP or hostname
-  #   DEPLOY_USER     -> SSH user (root or passwordless-sudo)
-  #   DEPLOY_SSH_KEY  -> private key (ed25519/rsa) for that user
-  # The deploy job is skipped while DEPLOY_HOST is unset; CI still runs.
-  DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-  DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+# Populate these secrets to enable auto-deploy to the DigitalOcean droplet:
+#   DEPLOY_HOST     -> droplet IP or hostname
+#   DEPLOY_USER     -> SSH user (root or passwordless-sudo)
+#   DEPLOY_SSH_KEY  -> private key (ed25519/rsa) for that user
+# The deploy job is skipped while DEPLOY_HOST is unset; CI still runs.
+# NOTE: `secrets` is not readable from workflow-level `env:` (GitHub rejects
+# the whole file if it is) — resolved inside the deploy job instead.
 
 jobs:
   test:
@@ -34,7 +33,10 @@ jobs:
     name: Deploy to droplet
     needs: test
     runs-on: ubuntu-latest
-    if: ${{ env.DEPLOY_HOST != '' }}
+    if: ${{ secrets.DEPLOY_HOST != '' }}
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0

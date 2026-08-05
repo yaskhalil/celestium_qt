@@ -104,6 +104,11 @@ Every push to `main` runs the full test suite in CI, then **auto-deploys to the 
 
 The deploy job is skipped until `DEPLOY_HOST` is set, so CI is safe to enable immediately.
 
+Both `deploy.yml` and `ingest_databento.yml` also expose `workflow_dispatch`, so you can trigger either one manually from the repo's **Actions** tab instead of waiting for a push or the Saturday cron schedule — useful for confirming a workflow fix actually worked.
+
+### Weekly Data Refresh (`ingest_databento.yml`)
+Runs every Saturday at 00:00 UTC: re-pulls the last year of `ohlcv-1m` SPY data from Databento, resamples it, and commits the refreshed dataset back to `main`. Needs the `DATABENTO_API_KEY` secret set, and needs the repo's Settings → Actions → General → Workflow permissions set to "Read and write permissions" (or an explicit `permissions: contents: write` in the workflow) so the commit-back step can push.
+
 ---
 
 ## 🛠 Service Management
