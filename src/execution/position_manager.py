@@ -1,3 +1,16 @@
+"""
+Position Manager — Execution router managing position lifecycle and broker integration.
+
+Responsibilities:
+1. Order placement: BUY/SELL to Alpaca (with shadow mode fallback)
+2. Position tracking: Syncs qty, entry price, stop/limit levels
+3. Exit monitoring: Checks for SL/TP hits, validates through Oracle
+4. GFV compliance: Enforces 30-second minimum hold before sells
+5. State updates: Feeds PnL and cash flow into Oracle/AccountState
+
+The position manager is the single point of broker integration.
+Shadow mode allows strategy testing without real market impact.
+"""
 import asyncio
 import structlog
 from datetime import datetime, timezone

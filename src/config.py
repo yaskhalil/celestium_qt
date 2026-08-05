@@ -7,20 +7,9 @@ from pydantic import Field
 logger = structlog.get_logger()
 
 class Settings(BaseSettings):
-    # Webull Connectivity (Legacy)
-    WEBULL_APP_KEY: str = Field(default="", alias="WEBULL_APP_KEY")
-    WEBULL_APP_SECRET: str = Field(default="", alias="WEBULL_APP_SECRET")
-    WEBULL_ACCESS_TOKEN: str = Field(default="", alias="WEBULL_ACCESS_TOKEN")
-    WEBULL_ACCOUNT_ID: str = Field(default="", alias="WEBULL_ACCOUNT_ID")
-
     # DuckDB Connectivity
     DUCKDB_PATH: str = Field(default="data/celestium.db", alias="DUCKDB_PATH")
 
-    # Rithmic Connectivity (Legacy - To be removed)
-    RITHMIC_USERNAME: str = Field(default="user", alias="RITHMIC_USERNAME")
-    RITHMIC_PASSWORD: str = Field(default="pass", alias="RITHMIC_PASSWORD")
-    RITHMIC_SYSTEM_NAME: str = Field(default="Rithmic Paper Trading", alias="RITHMIC_SYSTEM_NAME")
-    
     # Databento (Historical Data)
     DATABENTO_API_KEY: str = Field(default="YOUR_DATABENTO_KEY", alias="DATABENTO_API_KEY")
 
@@ -64,7 +53,6 @@ class Settings(BaseSettings):
     SHADOW_MODE: bool = Field(default=True, alias="SHADOW_MODE")
     COMMISSION_PER_LOT: float = 0.60
     SIGNAL_THRESHOLD: float = 0.4
-    TICK_VALUE: float = 2.0
     PT_MULTIPLIER: float = 1.0
     SL_MULTIPLIER: float = 0.5
 

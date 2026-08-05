@@ -1,3 +1,14 @@
+"""
+Strategy Module — Orchestrates the 4-layer decision stack.
+
+Layer 1 (Regime Filter):   Close > SMA20, Hurst trending, ADX strength
+Layer 2 (Classifier):      XGBoost model predicts entry probability
+Layer 3 (Allocator):       Dynamic Kelly-like position sizing (2% base risk)
+Layer 4 (Oracle):          Risk firewall — DLL, profit ceiling, GFV, floor, volatility
+
+Returns (TradeProposal, veto_reason) tuple.
+Decoupled from execution scheduling — purely generative.
+"""
 import polars as pl
 from typing import Optional, Tuple
 from pydantic import BaseModel

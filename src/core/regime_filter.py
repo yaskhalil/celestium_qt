@@ -1,3 +1,16 @@
+"""
+Regime Filter — The trend-regime gate (Layer 1) that only allows entries during confirmed trends.
+
+This gate validates three conditions:
+1. Price above 20-bar SMA (uptrend)
+2. Hurst exponent at or above threshold (persistent, non-random movement)
+3. ADX above threshold (directional strength, not choppy)
+
+When any feature is missing (e.g., insufficient bars) or is NaN (edge case), fails CLOSED
+to prevent false signals from incomplete data.
+
+Replaces the former Boolean State Space / STP framing (from cancer-cell modeling).
+"""
 import polars as pl
 import math
 from typing import Optional

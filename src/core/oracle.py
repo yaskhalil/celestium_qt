@@ -1,3 +1,16 @@
+"""
+Risk Management Oracle — The deterministic firewall preventing catastrophic losses.
+
+The Oracle enforces all trading constraints:
+- Dynamic position sizing limits (% of balance, not fixed $)
+- Daily Loss Limit (DLL) — intraday halt when 5% of balance is lost
+- Daily Profit Ceiling — auto-lock after 6% gain to lock in profits
+- Account Safety Floor — 90% of starting balance = max 10% total drawdown
+- Good Faith Violation (GFV) protection — SELL proceeds can't fund same-day BUYs
+- Volatility circuit breaker — blocks trades when VIXY > 30
+
+No trade executes without passing validate_trade(). This is the single point of enforcement.
+"""
 from enum import Enum
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo

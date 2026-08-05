@@ -1,10 +1,9 @@
 import xgboost as xgb
-import torch
 import polars as pl
 import numpy as np
 import structlog
 import os
-from src.features.regime import add_regime_features, calculate_hurst_variance_ratio
+from src.features.regime import add_regime_features
 
 logger = structlog.get_logger()
 

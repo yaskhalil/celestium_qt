@@ -1,3 +1,17 @@
+"""
+Hardened Backtest Engine — Isolated simulation environment for strategy evaluation.
+
+This engine replicates the live trading stack within a deterministic test harness:
+- Uses synthetic historical OHLCV bars
+- Enforces all Oracle rules (DLL, profit ceiling, floor, GFV)
+- Respects T+1 settlement and cash pool dynamics
+- Produces equity curve and trade metrics for performance analysis
+
+Key differences from live:
+- Time stops at bar close (no intrabar price moves)
+- No slippage, no commissions beyond fixed cost
+- Deterministic outcomes (no network, no broker API latency)
+"""
 import polars as pl
 import numpy as np
 from datetime import datetime, time, timezone

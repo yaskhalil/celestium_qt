@@ -1,3 +1,15 @@
+"""
+Dynamic Position Allocator — Translates alpha signals into position sizes (Layer 3).
+
+Implements risk-based Kelly-like sizing:
+- Base risk: 2% of capital at risk per trade
+- Asymmetric scaling: Halve risk in drawdown, increase on winning streaks
+- Confidence scaling: Scale risk by model probability vs threshold
+- Hard constraints: Cannot exceed affordable shares or max position % of balance
+- Fractional shares: Supports micro-lot execution for risk management
+
+The allocator ensures position sizing respects both risk management and balance constraints.
+"""
 import structlog
 import math
 from src.config import settings
