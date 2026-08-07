@@ -15,8 +15,8 @@ class TelegramNotifier:
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.base_url = f"https://api.telegram.org/bot{self.token}/sendMessage"
 
-    async def notify(self, message: str):
-        """Sends a message to the configured Telegram chat."""
+    async def notify(self, message: str, max_retries: int = 3):
+        """Sends a message to the configured Telegram chat, retrying transient failures."""
         if not self.enabled:
             return
 
@@ -24,20 +24,40 @@ class TelegramNotifier:
             logger.warning("Telegram: Enabled but token or chat_id is missing")
             return
 
-        try:
-            async with httpx.AsyncClient() as client:
-                payload = {
-                    "chat_id": self.chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown"
-                }
-                response = await client.post(self.base_url, json=payload, timeout=5.0)
-                if response.status_code != 200:
-                    logger.error("Telegram: API Error", status=response.status_code, text=response.text)
-                else:
+        payload = {
+            "chat_id": self.chat_id,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(self.base_url, json=payload, timeout=5.0)
+
+                if response.status_code == 200:
                     logger.debug("Telegram: Message sent successfully")
-        except Exception as e:
-            logger.error("Telegram: Failed to send notification", error=str(e))
+                    return
+
+                # Retry on rate limiting and server errors; don't retry on bad
+                # requests (e.g. malformed Markdown) since a retry can't fix those.
+                retryable = response.status_code == 429 or response.status_code >= 500
+                logger.error(
+                    "Telegram: API Error",
+                    status=response.status_code,
+                    text=response.text,
+                    attempt=attempt,
+                    retryable=retryable,
+                )
+                if not retryable:
+                    return
+            except httpx.HTTPError as e:
+                logger.error("Telegram: Failed to send notification", error=str(e), attempt=attempt)
+
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** (attempt - 1))
+
+        logger.error("Telegram: Giving up on notification after retries exhausted", attempts=max_retries)
 
     async def notify_startup(self, balance: float, shadow_mode: bool):
         """Alerts when bot boots up."""

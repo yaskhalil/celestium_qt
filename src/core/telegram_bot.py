@@ -20,6 +20,7 @@ class TelegramBot:
         self.notifier = TelegramNotifier()
         self.running = False
         self.task = None
+        self._config_lock = asyncio.Lock()
 
     def start(self):
         """Starts the background polling task."""
@@ -90,6 +91,36 @@ class TelegramBot:
                 await asyncio.sleep(5)
             await asyncio.sleep(1)
 
+    def _persist_shadow_mode(self, new_shadow: bool) -> None:
+        """Blocking read-modify-write of deployment_config.json. Run under self._config_lock."""
+        config_path = "deployment_config.json"
+        config_data = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    config_data = json.load(f)
+            except Exception as e:
+                logger.error("Telegram Bot: Failed to load config to save", error=str(e))
+
+        config_data["shadow_mode"] = new_shadow
+
+        try:
+            with open(config_path, "w") as f:
+                json.dump(config_data, f, indent=4)
+        except Exception as e:
+            logger.error("Telegram Bot: Failed to save config to disk", error=str(e))
+
+    def _load_backtest_report(self) -> dict:
+        """Blocking read of the backtest report, offloaded via asyncio.to_thread."""
+        report_path = "data/backtest_report.json"
+        if os.path.exists(report_path):
+            try:
+                with open(report_path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error("Telegram Bot: Failed to load backtest report", error=str(e))
+        return {}
+
     async def process_telegram_command(self, command: str):
         """Processes Telegram commands."""
         parts = command.split()
@@ -130,24 +161,10 @@ class TelegramBot:
                 new_shadow = not current_shadow
                 
             settings.SHADOW_MODE = new_shadow
-            
-            config_path = "deployment_config.json"
-            config_data = {}
-            if os.path.exists(config_path):
-                try:
-                    with open(config_path, "r") as f:
-                        config_data = json.load(f)
-                except Exception as e:
-                    logger.error("Telegram Bot: Failed to load config to save", error=str(e))
-            
-            config_data["shadow_mode"] = new_shadow
-            
-            try:
-                with open(config_path, "w") as f:
-                    json.dump(config_data, f, indent=4)
-            except Exception as e:
-                logger.error("Telegram Bot: Failed to save config to disk", error=str(e))
-                
+
+            async with self._config_lock:
+                await asyncio.to_thread(self._persist_shadow_mode, new_shadow)
+
             state_str = "🟡 SHADOW MODE (Simulated)" if new_shadow else "🟢 LIVE TRADING (Alpaca)"
             await self.notifier.notify(f"🔄 *EXECUTION MODE UPDATED*\nSystem is now in `{state_str}`.")
             logger.info("Telegram Bot: Shadow mode updated", shadow_mode=new_shadow)
@@ -157,13 +174,7 @@ class TelegramBot:
             asyncio.create_task(self.run_telegram_backtest())
             
         elif cmd == "/performance":
-            backtest_data = {}
-            if os.path.exists("data/backtest_report.json"):
-                try:
-                    with open("data/backtest_report.json", "r") as f:
-                        backtest_data = json.load(f)
-                except Exception as e:
-                    logger.error("Telegram Bot: Failed to load backtest report", error=str(e))
+            backtest_data = await asyncio.to_thread(self._load_backtest_report)
 
             history = self.engine.account_state.trading_history
             total_sessions = len(history)
